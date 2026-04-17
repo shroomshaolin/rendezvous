@@ -1,0 +1,62 @@
+{
+  "name": "rendezvous",
+  "display_name": "Rendezvous",
+  "version": "0.6.0",
+  "description": "Two-person persona rendezvous app",
+  "author": "Donna",
+  "capabilities": {
+    "tools": ["tools/rendezvous.py"],
+    "routes": [
+      {
+        "method": "GET",
+        "path": "personas",
+        "handler": "routes/app_api.py:get_personas"
+      },
+      {
+        "method": "GET",
+        "path": "session/state",
+        "handler": "routes/app_api.py:get_state"
+      },
+      {
+        "method": "POST",
+        "path": "session/start",
+        "handler": "routes/app_api.py:start_session"
+      },
+      {
+        "method": "POST",
+        "path": "session/continue",
+        "handler": "routes/app_api.py:continue_session"
+      },
+      {
+        "method": "POST",
+        "path": "session/user_message",
+        "handler": "routes/app_api.py:user_message"
+      },
+      {
+        "method": "POST",
+        "path": "session/end",
+        "handler": "routes/app_api.py:end_session"
+      },
+      {
+        "method": "GET",
+        "path": "history",
+        "handler": "routes/app_api.py:get_history"
+      },
+      {
+        "method": "POST",
+        "path": "history/save",
+        "handler": "routes/app_api.py:save_history"
+      },
+      {
+        "method": "POST",
+        "path": "history/load",
+        "handler": "routes/app_api.py:load_history"
+      },
+      {
+        "method": "POST",
+        "path": "history/delete",
+        "handler": "routes/app_api.py:delete_history"
+      }
+    ]
+  }
+}
