@@ -2,6 +2,10 @@
 
 Rendezvous is a Sapphire plugin for persona-to-persona conversations, with archive and transcript support.
 
+## Screenshot
+
+![Rendezvous screenshot](screenshot.png)
+
 ## Features
 
 - Persona-to-persona conversation flow
