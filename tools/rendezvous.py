@@ -138,133 +138,28 @@ def _api(method, path, payload=None):
         return text
 
 
-def _looks_like_prompt_scaffold(text):
-    if not isinstance(text, str):
-        return False
-
-    markers = (
-        "Persona metadata:",
-        "Other persona hints:",
-        "Scene seed:",
-        "Transcript so far:",
-        "Write exactly ONE natural next message as yourself only.",
-        "Do not write the speaker name.",
-        "Do not speak for the other persona.",
-        "Do not summarize.",
-        "Do not explain your reasoning.",
-        "Do not call tools.",
-        "Keep it conversational and organic.",
-    )
-    return any(marker in text for marker in markers)
-
-
-def _sanitize_reply_text(text):
-    if not isinstance(text, str):
-        return ""
-
-    text = text.strip()
-    if not text:
-        return ""
-
-    # If a debug-style transcript leaked, keep only the last Avatar chunk.
-    lines = text.splitlines()
-    chunks = []
-    current = []
-    saw_avatar = False
-
-    for line in lines:
-        if line.strip() == "Avatar":
-            saw_avatar = True
-            chunk = "
-".join(current).strip()
-            if chunk:
-                chunks.append(chunk)
-            current = []
-            continue
-        current.append(line)
-
-    chunk = "
-".join(current).strip()
-    if chunk:
-        chunks.append(chunk)
-
-    if saw_avatar and chunks:
-        text = chunks[-1]
-
-    cleaned = []
-    icon_only = {"🗑️", "🔄", "▶️", "✏️", "🔊", "🎤", "📎"}
-
-    for line in text.splitlines():
-        stripped = line.strip()
-
-        if not stripped:
-            cleaned.append("")
-            continue
-
-        if stripped in icon_only:
-            continue
-
-        if stripped == "Avatar":
-            continue
-
-        if "tok/s" in stripped and " in / " in stripped:
-            continue
-
-        if _looks_like_prompt_scaffold(stripped):
-            continue
-
-        cleaned.append(line)
-
-    text = "
-".join(cleaned).strip()
-
-    if _looks_like_prompt_scaffold(text):
-        return ""
-
-    return text
-
-
 def _extract_reply_text(payload):
     if isinstance(payload, str):
-        return _sanitize_reply_text(payload)
-
-    if isinstance(payload, list):
-        for item in payload:
-            text = _extract_reply_text(item)
-            if text:
-                return text
-        return ""
+        return payload.strip()
 
     if isinstance(payload, dict):
-        preferred_keys = (
-            "response",
-            "assistant",
-            "reply",
-            "output",
-            "content",
-        )
-        fallback_keys = (
-            "text",
-            "message",
-            "input",
-            "prompt",
-        )
+        for key in ("response", "assistant", "text", "message", "content", "reply", "output"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
 
-        for key in preferred_keys + fallback_keys:
-            if key not in payload:
-                continue
-            text = _extract_reply_text(payload.get(key))
-            if text:
-                return text
-
-        for key, value in payload.items():
-            if key in preferred_keys or key in fallback_keys:
-                continue
-            text = _extract_reply_text(value)
-            if text:
-                return text
+        choices = payload.get("choices")
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            if isinstance(first, dict):
+                msg = first.get("message")
+                if isinstance(msg, dict):
+                    content = msg.get("content")
+                    if isinstance(content, str) and content.strip():
+                        return content.strip()
 
     return ""
+
 
 def _strip_speaker_prefix(text, speaker):
     text = (text or "").strip()
@@ -500,7 +395,7 @@ def _chat_once(prompt, chat_name):
     last_error = None
     for body in attempts:
         try:
-            result = _api("POST", "/api/chat", body)
+            result = _api("POST", "/api/chat", {**body, "isolated": True, "task_settings": {}})
             text = _extract_reply_text(result)
             if text:
                 return text
