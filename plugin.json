@@ -5,7 +5,9 @@
   "description": "Two-person persona rendezvous app",
   "author": "Donna",
   "capabilities": {
-    "tools": ["tools/rendezvous.py"],
+    "tools": [
+      "tools/rendezvous.py"
+    ],
     "routes": [
       {
         "method": "GET",
@@ -57,6 +59,10 @@
         "path": "history/delete",
         "handler": "routes/app_api.py:delete_history"
       }
-    ]
-  }
+    ],
+    "app": {
+      "icon": "🍺"
+    }
+  },
+  "icon": "🍺"
 }
