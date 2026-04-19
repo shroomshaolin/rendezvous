@@ -4,6 +4,7 @@
     history: [],
     lastTranscript: "",
     pendingDividerLabel: "",
+    showInnerThoughts: localStorage.getItem("rvShowInnerThoughts") === "true",
     viewMode: "live"
   };
 
@@ -109,17 +110,94 @@
     return { scene, entries };
   }
 
+
+  function normalizeThoughtText(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/[\\*_`:#>\-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function isInnerThoughtPart(part) {
+    const header = normalizeThoughtText([
+      part && part.speaker,
+      part && part.role,
+      part && part.label,
+      part && part.title,
+      part && part.header,
+      part && part.name,
+      part && part.type,
+      part && part.kind
+    ].filter(Boolean).join(" "));
+
+    const body = normalizeThoughtText([
+      part && part.text,
+      part && part.body,
+      part && part.content
+    ].filter(Boolean).join(" "));
+
+    return (
+      header.includes("inner thoughts") ||
+      header.includes("inner thought") ||
+      header.includes("private thoughts") ||
+      header.includes("private thought") ||
+      body.startsWith("inner thoughts") ||
+      body.startsWith("inner thought") ||
+      body.startsWith("private thoughts") ||
+      body.startsWith("private thought")
+    );
+  }
+
+  function filterTranscriptParts(parts) {
+    let normalized = [];
+
+    if (Array.isArray(parts)) {
+      normalized = parts;
+    } else if (parts && Array.isArray(parts.parts)) {
+      normalized = parts.parts;
+    } else if (parts && Array.isArray(parts.lines)) {
+      normalized = parts.lines;
+    } else if (parts && typeof parts[Symbol.iterator] === "function" && typeof parts !== "string") {
+      normalized = Array.from(parts);
+    } else if (typeof parts === "string") {
+      const parsed = splitTranscript(parts);
+
+      if (Array.isArray(parsed)) {
+        normalized = parsed;
+      } else if (parsed && Array.isArray(parsed.parts)) {
+        normalized = parsed.parts;
+      } else if (parsed && Array.isArray(parsed.lines)) {
+        normalized = parsed.lines;
+      } else {
+        normalized = [];
+      }
+    } else {
+      normalized = [];
+    }
+
+    if (!Array.isArray(normalized)) {
+      normalized = [];
+    }
+
+    return state.showInnerThoughts
+      ? normalized
+      : normalized.filter(part => !isInnerThoughtPart(part));
+  }
+
   function renderTranscriptHtml(text) {
     const raw = String(text || "");
     if (!raw.trim()) return "";
 
-    const current = splitTranscript(raw);
-    const previous = splitTranscript(state.lastTranscript || "");
+    const current = splitTranscript(raw) || {};
+    const previous = splitTranscript(state.lastTranscript || "") || {};
+    const currentEntries = filterTranscriptParts(current.entries || current);
+    const previousEntries = filterTranscriptParts(previous.entries || previous);
 
     let firstNewIndex = -1;
     if (state.lastTranscript && state.viewMode === "live") {
-      const prevLen = previous.entries.length;
-      const currLen = current.entries.length;
+      const prevLen = previousEntries.length;
+      const currLen = currentEntries.length;
       if (currLen > prevLen) firstNewIndex = prevLen;
     }
 
@@ -143,7 +221,7 @@
       );
     }
 
-    current.entries.forEach((entry, index) => {
+    currentEntries.forEach((entry, index) => {
       if (firstNewIndex === index && state.pendingDividerLabel) {
         html.push(
           `<div style="display:flex; align-items:center; gap:10px; margin:14px 0 16px 0;">
@@ -164,37 +242,36 @@
         );
       }
 
-      if (entry.type === "line") {
-        const color = speakerColor(entry.speaker);
-        const isNew = firstNewIndex !== -1 && index >= firstNewIndex;
-
-        html.push(
-          `<div style="
-            margin: 0 0 12px 0;
-            padding: 10px 12px;
-            border-radius: 12px;
-            border: 1px solid ${isNew ? "rgba(124, 58, 237, .55)" : "rgba(120,120,140,.28)"};
-            background: ${isNew ? "rgba(76, 29, 149, .10)" : "rgba(255,255,255,.02)"};
-            box-shadow: ${isNew ? "0 0 0 1px rgba(168, 85, 247, .08) inset" : "none"};
-          ">
-            <div style="margin:0 0 4px 0;">
-              <span style="color:${color}; font-weight:800;">${escapeHtml(entry.speaker)}</span>
-            </div>
-            <div style="color:#f3e8ff; white-space:pre-wrap;">${escapeHtml(entry.body)}</div>
-          </div>`
-        );
-      } else {
-        html.push(
-          `<div style="
-            margin: 0 0 12px 0;
-            padding: 8px 12px;
-            border-left: 3px solid #7c3aed;
-            color: #d8b4fe;
-            background: rgba(255,255,255,.02);
-            border-radius: 8px;
-          ">${escapeHtml(entry.body)}</div>`
-        );
+      if (entry.type !== "line") {
+        return;
       }
+
+      if (
+        /^\*.*\*$/.test(entry.body) ||
+        /^\(.*\)$/.test(entry.body) ||
+        /^\[.*\]$/.test(entry.body)
+      ) {
+        return;
+      }
+
+      const color = speakerColor(entry.speaker);
+      const isNew = firstNewIndex !== -1 && index >= firstNewIndex;
+
+      html.push(
+        `<div style="
+          margin: 0 0 12px 0;
+          padding: 10px 12px;
+          border-radius: 12px;
+          border: 1px solid ${isNew ? "rgba(124, 58, 237, .55)" : "rgba(120,120,140,.28)"};
+          background: ${isNew ? "rgba(76, 29, 149, .10)" : "rgba(255,255,255,.02)"};
+          box-shadow: ${isNew ? "0 0 0 1px rgba(168, 85, 247, .08) inset" : "none"};
+        ">
+          <div style="margin:0 0 4px 0;">
+            <span style="color:${color}; font-weight:800;">${escapeHtml(entry.speaker)}</span>
+          </div>
+          <div style="color:#f3e8ff; white-space:pre-wrap;">${escapeHtml(entry.body)}</div>
+        </div>`
+      );
     });
 
     return html.join("");
@@ -237,7 +314,7 @@
 
   function render(root) {
     root.innerHTML = `
-      <div style="max-width: 1580px; margin: 0 auto; padding: 24px; font-family: sans-serif;">
+      <div style="max-width: 1580px; margin: 0 auto; padding: 24px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px;">
           <div>
             <h2 style="margin:0;">☕ Rendezvous</h2>
@@ -283,6 +360,7 @@
               <h3 style="margin:0;">Transcript</h3>
               <div style="display:flex; gap:8px; flex-wrap:wrap;">
                 <button id="rv-copy" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Copy Transcript</button>
+                <button id="rv-toggle-thoughts" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">&#x1F9E0; Inner thoughts: <span id="rv-toggle-thoughts-label">Off</span></button>
                 <button id="rv-export" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Save Session</button>
                 <button id="rv-archive" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Archive Session</button>
               </div>
@@ -335,6 +413,22 @@
 
     const status = root.querySelector("#rv-status");
     const transcript = root.querySelector("#rv-transcript");
+
+    function updateInnerThoughtsToggle() {
+      const label = root.querySelector("#rv-toggle-thoughts-label");
+      const btn = root.querySelector("#rv-toggle-thoughts");
+      if (label) label.textContent = state.showInnerThoughts ? "On" : "Off";
+      if (btn) {
+        btn.style.borderColor = state.showInnerThoughts ? "#34d399" : "#7c3aed";
+        btn.style.color = state.showInnerThoughts ? "#d1fae5" : "#e9d5ff";
+        btn.style.background = state.showInnerThoughts
+          ? "rgba(6, 95, 70, .24)"
+          : "rgba(76, 29, 149, .18)";
+      }
+    }
+
+    updateInnerThoughtsToggle();
+
     const p1 = root.querySelector("#rv-persona-1");
     const p2 = root.querySelector("#rv-persona-2");
     const userBox = root.querySelector("#rv-user-message");
@@ -344,8 +438,97 @@
       status.textContent = text || "";
     }
 
+    function polishTranscriptDom() {
+      transcript.style.display = "flex";
+      transcript.style.flexDirection = "column";
+      transcript.style.gap = "16px";
+
+      const blocks = Array.from(transcript.children);
+
+      blocks.forEach((el) => {
+        if (!(el instanceof HTMLElement)) return;
+
+        const raw = (el.textContent || "").trim();
+        const compact = raw.replace(/\s+/g, " ");
+        const lower = compact.toLowerCase();
+
+        const isDivider =
+          lower === "next batch" ||
+          lower === "donna steps in" ||
+          lower === "new session";
+
+        const isScene = lower.startsWith("scene:");
+        const isYou = lower.startsWith("you") || lower.startsWith("donna");
+
+        el.style.margin = "0";
+        el.style.transition = "all .18s ease";
+        el.style.overflowWrap = "anywhere";
+        el.style.boxSizing = "border-box";
+
+        if (isDivider) {
+          el.style.alignSelf = "center";
+          el.style.padding = "6px 14px";
+          el.style.borderRadius = "999px";
+          el.style.border = "1px solid rgba(168, 85, 247, .45)";
+          el.style.background = "rgba(76, 29, 149, .14)";
+          el.style.color = "#e9d5ff";
+          el.style.fontSize = "13px";
+          el.style.fontWeight = "800";
+          el.style.letterSpacing = ".06em";
+          el.style.textTransform = "uppercase";
+          el.style.boxShadow = "0 0 0 1px rgba(255,255,255,.02) inset";
+          return;
+        }
+
+        if (isScene) {
+          el.style.margin = "0 0 2px 0";
+          el.style.padding = "12px 14px 12px 16px";
+          el.style.borderRadius = "14px";
+          el.style.borderStyle = "solid";
+          el.style.borderWidth = "1px 1px 1px 5px";
+          el.style.borderColor = "rgba(59, 130, 246, .32) rgba(59, 130, 246, .22) rgba(59, 130, 246, .22) rgba(96, 165, 250, .95)";
+          el.style.background = "linear-gradient(90deg, rgba(15, 23, 42, .96) 0%, rgba(20, 32, 61, .88) 100%)";
+          el.style.boxShadow = "0 0 0 1px rgba(255,255,255,.02) inset";
+          return;
+        }
+
+        const speaker = el.querySelector("span");
+        const accent = speaker
+          ? (speaker.style.color || getComputedStyle(speaker).color || "#c084fc")
+          : (isYou ? "#60a5fa" : "#f472b6");
+
+        el.style.padding = "20px 22px 20px 18px";
+        el.style.borderRadius = "22px";
+        el.style.borderStyle = "solid";
+        el.style.borderWidth = "1px 1px 1px 6px";
+        el.style.boxShadow = "0 0 0 1px rgba(255,255,255,.02) inset";
+
+        if (isYou) {
+          el.style.borderColor = "rgba(59, 130, 246, .22) rgba(59, 130, 246, .22) rgba(59, 130, 246, .22) rgba(96, 165, 250, .95)";
+          el.style.background = "linear-gradient(90deg, rgba(15, 23, 42, .98) 0%, rgba(17, 24, 39, .92) 100%)";
+        } else {
+          el.style.borderColor = "rgba(168, 85, 247, .22) rgba(168, 85, 247, .22) rgba(168, 85, 247, .22) " + accent;
+          el.style.background = "linear-gradient(90deg, rgba(46, 24, 58, .78) 0%, rgba(28, 18, 44, .52) 100%)";
+        }
+
+        if (speaker) {
+          speaker.style.fontSize = "15px";
+          speaker.style.fontWeight = "800";
+          speaker.style.letterSpacing = ".02em";
+        }
+
+        const body = el.lastElementChild;
+        if (body instanceof HTMLElement) {
+          body.style.fontSize = "15px";
+          body.style.lineHeight = "1.6";
+          body.style.color = "#f8fafc";
+        }
+      });
+    }
+
     function setTranscript(text) {
       transcript.innerHTML = renderTranscriptHtml(text || "");
+      polishTranscriptDom();
       requestAnimationFrame(() => {
         transcript.scrollTop = transcript.scrollHeight;
       });
@@ -443,6 +626,8 @@
       fillPersonas(state.personas);
     }
 
+    setStatus("Idle");
+
     async function loadHistory() {
       const data = await api("history");
       state.history = data.history || [];
@@ -476,7 +661,7 @@
         setTranscript(data.transcript || "");
         setStatus("Paused");
       } catch (err) {
-        setStatus("Error");
+        console.error(err); setStatus("Error");
         setTranscript(String(err));
       }
     });
@@ -490,7 +675,7 @@
         setTranscript(data.transcript || "");
         setStatus("Paused");
       } catch (err) {
-        setStatus("Error");
+        console.error(err); setStatus("Error");
         setTranscript(String(err));
       }
     });
@@ -513,7 +698,7 @@
         setTranscript(data.transcript || "");
         setStatus("Paused");
       } catch (err) {
-        setStatus("Error");
+        console.error(err); setStatus("Error");
         setTranscript(String(err));
       }
     });
@@ -525,7 +710,7 @@
         userBox.value = "";
         await refreshState();
       } catch (err) {
-        setStatus("Error");
+        console.error(err); setStatus("Error");
         setTranscript(String(err));
       }
     });
@@ -543,9 +728,18 @@
         transcript.innerHTML = "";
         setStatus("Cleared");
       } catch (err) {
-        setStatus("Error");
+        console.error(err); setStatus("Error");
         setTranscript(String(err));
       }
+    });
+
+    root.querySelector("#rv-toggle-thoughts").addEventListener("click", () => {
+      state.showInnerThoughts = !state.showInnerThoughts;
+      localStorage.setItem("rvShowInnerThoughts", String(state.showInnerThoughts));
+      transcript.innerHTML = renderTranscriptHtml(state.lastTranscript || "");
+      polishTranscriptDom();
+      updateInnerThoughtsToggle();
+      transcript.scrollTop = transcript.scrollHeight;
     });
 
     root.querySelector("#rv-copy").addEventListener("click", async () => {
@@ -604,7 +798,7 @@
         await loadHistory();
         await refreshState();
       } catch (err) {
-        setStatus("Error");
+        console.error(err); setStatus("Error");
         setTranscript(String(err));
       }
     })();
