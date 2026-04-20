@@ -405,34 +405,71 @@ def _chat_once(prompt, chat_name):
     raise RuntimeError(f"/api/chat did not return usable text: {last_error}")
 
 
+def _expanded_transcript_entries(msg):
+    speaker = _clean_text(msg.get("speaker", ""))
+    raw_text = _clean_text(msg.get("text", ""))
+    if not raw_text:
+        return []
+
+    say = None
+    thought = None
+    extras = []
+
+    for raw_line in raw_text.replace("\r\n", "\n").split("\n"):
+        line = _clean_text(raw_line)
+        if not line:
+            continue
+        lower = line.lower()
+        if lower.startswith("say:"):
+            say = _clean_text(line.split(":", 1)[1])
+        elif (
+            lower.startswith("thought:") or
+            lower.startswith("inner thought:") or
+            lower.startswith("inner thoughts:")
+        ):
+            thought = _clean_text(line.split(":", 1)[1])
+        else:
+            extras.append(line)
+
+    if say is None:
+        if extras:
+            say = " ".join(extras)
+        else:
+            say = raw_text
+
+    entries = []
+    if say:
+        entries.append({"speaker": speaker, "text": say})
+    if thought:
+        entries.append({"speaker": "Inner thoughts", "text": f"{speaker}: {thought}"})
+    return entries
+
 def _transcript_text(limit=40):
     lines = []
-
     if STATE["scene"]:
         lines.append(f"Scene: {STATE['scene']}")
         lines.append("")
 
     recent = STATE["transcript"][-limit:]
     for msg in recent:
-        lines.append(f"{msg['speaker']}: {msg['text']}")
-        lines.append("")
+        for entry in _expanded_transcript_entries(msg):
+            lines.append(f"{entry['speaker']}: {entry['text']}")
+            lines.append("")
 
     return "\n".join(lines).strip()
 
-
 def _format_transcript():
     lines = []
-
     if STATE["scene"]:
         lines.append(f"Scene: {STATE['scene']}")
         lines.append("")
 
     for msg in STATE["transcript"]:
-        lines.append(f"{msg['speaker']}: {msg['text']}")
-        lines.append("")
+        for entry in _expanded_transcript_entries(msg):
+            lines.append(f"{entry['speaker']}: {entry['text']}")
+            lines.append("")
 
     return "\n".join(lines).strip()
-
 
 def _build_turn_prompt(speaker, other, user_name):
     speaker_bundle = _load_persona_bundle(speaker, user_name=user_name)
@@ -459,6 +496,15 @@ def _build_turn_prompt(speaker, other, user_name):
         f"You are in a private rendezvous with {other_bundle['name']}.\n"
         f"Other persona hints: {other_hint}\n"
         f"Scene seed: {scene}\n\n"
+        f"This is primarily a conversation with {other_bundle['name']}, not with the user or audience.\n"
+        f"Speak directly to {other_bundle['name']} and respond to what {other_bundle['name']} just said.\n"
+        f"Do not address Donna, the user, the moderator, or the audience unless the most recent transcript line is explicitly from the user.\n"
+        f"If the user did just speak, reply to that interjection once, then return to speaking with {other_bundle['name']}.\n"
+        f"Do not keep asking Donna questions every turn.\n"
+        f"Format every reply as exactly two lines in this exact form:\n"
+        f"SAY: <what you say aloud>\n"
+        f"THOUGHT: <your private inner thought>\n"
+        f"Always include both SAY and THOUGHT. Keep them concise. Do not add extra labels or stage directions.\n"
         f"Transcript so far:\n{transcript}\n\n"
         f"Write exactly ONE natural next message as yourself only.\n"
         f"Do not write the speaker name.\n"
