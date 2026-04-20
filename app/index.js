@@ -339,7 +339,7 @@
 
             <label style="display:block; margin-bottom:12px;">
               <div style="margin-bottom:6px;">Scene seed</div>
-              <textarea id="rv-scene" rows="4" style="width:100%; padding:10px; border-radius:8px;">meeting for coffee in a quiet diner at dusk</textarea>
+              <textarea id="rv-scene" rows="4" style="width:100%; padding:10px; border-radius:8px;">meeting for beers in a quiet bar at dusk</textarea>
             </label>
 
             <label style="display:block; margin-bottom:12px;">
