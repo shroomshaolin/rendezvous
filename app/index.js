@@ -317,7 +317,7 @@
       <div style="max-width: 1580px; margin: 0 auto; padding: 24px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px;">
           <div>
-            <h2 style="margin:0;">Rendezvous</h2>
+            <h2 style="margin:0;">🍺 Rendezvous</h2>
             <div style="opacity:.75; margin-top:6px;">A separate stage for two personas to meet, talk, and pause.</div>
           </div>
           <div id="rv-status" style="opacity:.8; font-weight:700;"></div>
