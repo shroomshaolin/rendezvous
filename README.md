@@ -13,6 +13,29 @@ Rendezvous is a Sapphire plugin for persona-to-persona conversations with transc
 - Archive/session support
 - Simple Sapphire plugin structure
 
+## New in this update
+
+Rendezvous can now archive ended sessions and let personas outside the app access those saved transcripts.
+
+### Transcript archive
+
+When a live Rendezvous session is ended, the transcript is saved automatically.
+
+### Outside transcript tools
+
+Rendezvous now exposes separate tools so archived sessions can be accessed outside the app:
+
+- `sessions` — list archived rendezvous sessions
+- `latest` — open the latest archived rendezvous session
+- `open` — open an archived rendezvous session by filename
+- `pick` — open an archived rendezvous session by index (`0` = newest)
+
+### Why this matters
+This makes it possible for personas outside Rendezvous to read prior Rendezvous conversations instead of being cut off from them.
+
+### In-app archive
+The archive area inside Rendezvous can refresh and display saved transcript sessions from the plugin archive.
+
 ## Files
 
 - `plugin.json` — plugin manifest
