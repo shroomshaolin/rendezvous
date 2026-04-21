@@ -1686,14 +1686,22 @@ const filename = loadBtn.getAttribute("data-filename") || "";
     const p1 = payload.persona_1 ?? payload.persona1 ?? payload.personaOne;
     const p2 = payload.persona_2 ?? payload.persona2 ?? payload.personaTwo;
     const scene = payload.scene ?? payload.scene_seed ?? payload.seed ?? "";
-    const tempo = payload.messages_per_batch ?? payload.tempo ?? payload.batch_size ?? "";
+    const rawTempo = payload.messages_per_batch ?? payload.tempo ?? payload.batch_size ?? "";
+
+    let tempo = "";
+    if (rawTempo !== "") {
+      const n = Number(rawTempo);
+      tempo = Number.isFinite(n) && n > 0
+        ? String(Math.max(1, Math.round(n / 2)))
+        : String(rawTempo);
+    }
 
     if (p1 || p2 || scene || tempo) {
       return {
         persona1: p1 ? String(p1) : "",
         persona2: p2 ? String(p2) : "",
         scene: scene ? String(scene) : "",
-        tempo: tempo !== "" ? String(tempo) : ""
+        tempo
       };
     }
 
