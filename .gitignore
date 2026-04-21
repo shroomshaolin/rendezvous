@@ -1,3 +1,13 @@
 __pycache__/
 *.pyc
 data/
+
+# Local backup / scratch files
+*.bak
+*.bak.*
+*.before_*
+*.pre_*
+*.working
+*.working_*
+*.clean_after_*
+*.disabled
