@@ -20,6 +20,7 @@
     }
     return data;
   }
+  window.__rvApi = api;
 
   function turnsEachToMessages(value) {
     return Math.max(1, parseInt(value, 10) || 2) * 2;
@@ -362,7 +363,7 @@
                 <button id="rv-copy" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Copy Transcript</button>
                 <button id="rv-toggle-thoughts" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">&#x1F9E0; Inner thoughts: <span id="rv-toggle-thoughts-label">Off</span></button>
                 <button id="rv-export" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Save Session</button>
-                <button id="rv-archive" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Archive Session</button>
+                <button type="button" id="rv-archive" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Create Archive</button>
               </div>
             </div>
 
@@ -551,74 +552,47 @@
     }
 
     function renderHistoryList() {
-      if (!state.history.length) {
-        historyList.innerHTML = `<div style="opacity:.75;">No archived sessions yet.</div>`;
-        return;
-      }
-
-      historyList.innerHTML = state.history.map(item => {
-        const when = item.created_at ? new Date(item.created_at).toLocaleString() : "";
-        const scene = item.scene ? item.scene : "";
-        return `
-          <div style="
-            margin-bottom:10px;
-            padding:10px;
-            border:1px solid rgba(120,120,140,.28);
-            border-radius:10px;
-            background: rgba(255,255,255,.02);
-          ">
-            <div style="font-weight:700; color:#f3e8ff; margin-bottom:4px;">${escapeHtml(item.title || "Archived session")}</div>
-            <div style="font-size:12px; opacity:.8; margin-bottom:4px;">${escapeHtml(when)}</div>
-            <div style="font-size:12px; opacity:.8; margin-bottom:8px;">${escapeHtml(scene)}</div>
-            <div style="display:flex; gap:8px;">
-              <button data-load-id="${escapeHtml(item.id)}" style="padding:7px 10px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Load</button>
-              <button data-delete-id="${escapeHtml(item.id)}" style="padding:7px 10px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Delete</button>
-            </div>
-          </div>
-        `;
-      }).join("");
-
-      historyList.querySelectorAll("[data-load-id]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          try {
-            const id = btn.getAttribute("data-load-id");
-            const data = await api("history/load", {
-              method: "POST",
-              body: JSON.stringify({ id })
-            });
-
-            const entry = data.entry || {};
-            state.viewMode = "archive";
-            state.pendingDividerLabel = "";
-            setTranscript(entry.transcript_text || "");
-            setStatus("Archive loaded");
-
-            if (entry.persona_1) p1.value = entry.persona_1;
-            if (entry.persona_2) p2.value = entry.persona_2;
-            if (entry.scene) root.querySelector("#rv-scene").value = entry.scene;
-          } catch (err) {
-            setStatus("Archive load failed");
-          }
-        });
-      });
-
-      historyList.querySelectorAll("[data-delete-id]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          try {
-            const id = btn.getAttribute("data-delete-id");
-            const data = await api("history/delete", {
-              method: "POST",
-              body: JSON.stringify({ id })
-            });
-            state.history = data.history || [];
-            renderHistoryList();
-            setStatus("Archive deleted");
-          } catch (err) {
-            setStatus("Delete failed");
-          }
-        });
-      });
+    if (!Array.isArray(state.history) || !state.history.length) {
+      historyList.innerHTML = `<div style="opacity:.75;">No archived sessions yet.</div>`;
+      return;
     }
+
+    historyList.innerHTML = state.history.map((item) => {
+      const speakers = Array.isArray(item && item.speakers) ? item.speakers.filter(Boolean) : [];
+      const title = speakers.length ? speakers.join(" × ") : String((item && item.filename) || "Archived session");
+
+      const metaBits = [];
+      if (item && item.created_at) {
+        try {
+          metaBits.push(new Date(item.created_at).toLocaleString());
+        } catch (e) {}
+      }
+      if (item && item.session_id) metaBits.push(String(item.session_id));
+
+      const meta = metaBits.join(" • ");
+      const filename = String((item && item.filename) || "");
+
+      return `
+        <div style="
+          margin-bottom: 10px;
+          padding: 10px 12px;
+          border: 1px solid #3b2b6b;
+          border-radius: 12px;
+          background: rgba(24,18,44,.88);
+        ">
+          <div style="font-weight:700; color:#f3e8ff; margin-bottom:4px;">
+            ${escapeHtml(title)}
+          </div>
+          <div style="font-size:12px; opacity:.82; margin-bottom:6px;">
+            ${escapeHtml(meta)}
+          </div>
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+            ${filename ? `<div style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;"><button data-load-filename="${escapeHtml(filename)}" style="padding:7px 10px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Load</button><button data-delete-filename="${escapeHtml(filename)}" style="padding:7px 10px; border-radius:10px; cursor:pointer; border:1px solid rgba(239,68,68,.35); background:rgba(239,68,68,.12); color:#fecaca; font-weight:700;">Delete 🗑️</button></div>` : ""}
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
 
     async function loadPersonas() {
       const data = await api("personas");
@@ -626,15 +600,182 @@
       fillPersonas(state.personas);
     }
 
+
+    
+
+
+    /* RV_FORCE_DELETE_HANDLER */
+    historyList.onclick = async (e) => {
+      const loadBtn = e.target.closest("[data-load-filename]");
+      if (loadBtn) {
+        const filename = loadBtn.getAttribute("data-load-filename") || "";
+        if (!filename) {
+          setStatus("Load failed: empty filename");
+          return;
+        }
+        try {
+          const data = await api("history/load", {
+            method: "POST",
+            body: JSON.stringify({ filename })
+          });
+          if (!data || data.ok === false) {
+            throw new Error((data && data.error) || "Load failed");
+          }
+          await refreshState();
+          setStatus("Archive loaded.");
+        } catch (err) {
+          console.error("Archive load failed:", err);
+          setStatus(`Load failed: ${err.message || err}`);
+        }
+        return;
+      }
+
+      const btn = e.target.closest("[data-delete-filename]");
+      if (!btn) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const filename = btn.getAttribute("data-delete-filename") || "";
+      if (!filename) return;
+
+      const ok = window.confirm(`Delete archive?\n\n${filename}`);
+      if (!ok) return;
+
+      btn.disabled = true;
+
+      try {
+        const res = await fetch("/api/plugin/rendezvous/history/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename })
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        state.history = Array.isArray(data.transcripts) ? data.transcripts : [];
+        renderHistoryList();
+        setStatus("Archive deleted.");
+      } catch (err) {
+        console.error("Archive delete failed:", err);
+        setStatus(`Delete failed: ${err.message || err}`);
+        btn.disabled = false;
+      }
+    };
+
+
+    
+    /* RV_ARCHIVE_CAPTURE_IN_SCOPE */
+    if (!root.__rvArchiveCaptureBound) {
+      root.__rvArchiveCaptureBound = true;
+
+      const __rvOriginalSetStatus = setStatus;
+      let __rvStatusGuardUntil = 0;
+
+      setStatus = function (msg) {
+        const now = Date.now();
+        const text = String(msg || "");
+
+        if (text === "Idle" && now < __rvStatusGuardUntil) {
+          return;
+        }
+
+        if (
+          text.startsWith("Creating archive") ||
+          text.startsWith("Archive created") ||
+          text.startsWith("Archive failed") ||
+          text.startsWith("Deleting:") ||
+          text.startsWith("Archive deleted") ||
+          text.startsWith("Delete failed")
+        ) {
+          __rvStatusGuardUntil = now + 5000;
+        }
+
+        return __rvOriginalSetStatus(text);
+      };
+
+      async function __rvReloadArchives() {
+        const data = await api("transcripts");
+        state.history = Array.isArray(data.transcripts) ? data.transcripts : [];
+        renderHistoryList();
+        return data;
+      }
+
+      root.addEventListener("click", async (e) => {
+        const archiveBtn = e.target.closest("#rv-archive");
+        if (archiveBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+
+          archiveBtn.disabled = true;
+          try {
+            setStatus("Creating archive...");
+            await api("history/save", {
+              method: "POST",
+              body: JSON.stringify({})
+            });
+            await __rvReloadArchives();
+            setStatus("Archive created.");
+          } catch (err) {
+            console.error("Archive create failed:", err);
+            setStatus(`Archive failed: ${err.message || err}`);
+          } finally {
+            archiveBtn.disabled = false;
+          }
+          return;
+        }
+
+        const delBtn = e.target.closest("[data-delete-filename]");
+        if (delBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+
+          const filename = delBtn.getAttribute("data-delete-filename") || "";
+          if (!filename) {
+            setStatus("Delete failed: empty filename");
+            return;
+          }
+
+          const ok = window.confirm(`Delete archive?\n\n${filename}`);
+          if (!ok) return;
+
+          delBtn.disabled = true;
+          try {
+            setStatus(`Deleting: ${filename}`);
+            const data = await api("history/delete", {
+              method: "POST",
+              body: JSON.stringify({ filename })
+            });
+            state.history = Array.isArray(data.transcripts) ? data.transcripts : [];
+            renderHistoryList();
+            setStatus("Archive deleted.");
+          } catch (err) {
+            console.error("Archive delete failed:", err);
+            setStatus(`Delete failed: ${err.message || err}`);
+          } finally {
+            delBtn.disabled = false;
+          }
+        }
+      }, true);
+    }
+
+
     setStatus("Idle");
 
     async function loadHistory() {
-      const data = await api("history");
-      state.history = data.history || [];
-      renderHistoryList();
-    }
+    const data = await api("transcripts");
+    state.history = Array.isArray(data.transcripts) ? data.transcripts : [];
+    renderHistoryList();
+    return data;
+  }
 
     async function refreshState() {
+    window.__rvRefreshState = refreshState;
       const data = await api("session/state");
       const s = data.state || {};
       state.viewMode = "live";
@@ -709,6 +850,7 @@
         await api("session/end", { method: "POST" });
         userBox.value = "";
         await refreshState();
+        await loadHistory();
       } catch (err) {
         console.error(err); setStatus("Error");
         setTranscript(String(err));
@@ -766,22 +908,29 @@
 
     root.querySelector("#rv-archive").addEventListener("click", async () => {
       try {
-        if (!state.lastTranscript.trim()) {
-          setStatus("Nothing to archive.");
-          return;
-        }
-        const data = await api("history/save", {
+        setStatus("Creating archive...");
+        const res = await fetch("/api/plugin/rendezvous/history/save", {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({})
         });
-        state.history = data.history || [];
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        state.history = Array.isArray(data.transcripts) ? data.transcripts : [];
         renderHistoryList();
-        setStatus("Session archived.");
+        setStatus("Archive created.");
       } catch (err) {
-        setStatus("Archive failed");
+        console.error("Archive create failed:", err);
+        setStatus(`Archive failed: ${err.message || err}`);
       }
     });
 
+    const oldRefreshBtn = root.querySelector("#rv-refresh-history");
+    if (oldRefreshBtn) oldRefreshBtn.style.display = "none";
     root.querySelector("#rv-refresh-history").addEventListener("click", async () => {
       try {
         await loadHistory();
@@ -803,6 +952,10 @@
       }
     })();
   }
+
+  
+
+window.__rvRefreshState = window.__rvRefreshState || (async () => {});
 
   const ROOT_ID = "rendezvous-app-root";
   let routeWatcher = null;
@@ -863,11 +1016,329 @@
 
   window.addEventListener("hashchange", syncRoute);
   window.addEventListener("popstate", syncRoute);
-  document.addEventListener("click", () => setTimeout(syncRoute, 60), true);
+  document.addEventListener("click", (e) => {
+  if (
+    e.target &&
+    typeof e.target.closest === "function" &&
+    (
+      e.target.closest("#rv-archive-panel-clean") ||
+      e.target.closest(".rv-archive-load-clean") ||
+      e.target.closest(".rv-archive-delete-clean") ||
+      e.target.closest("[data-filename]") ||
+      e.target.closest("#rv-archive") ||
+      e.target.closest("#rv-refresh-history") ||
+      e.target.closest("#rv-archive-create-clean") ||
+      e.target.closest("#rv-archive-refresh-clean")
+    )
+  ) return;
+  setTimeout(syncRoute, 60);
+}, true);
+
+document.addEventListener("click", (e) => {
+  const t = e.target;
+  if (!t || typeof t.closest !== "function") return;
+  if (
+    t.closest("#rv-archive-panel-clean") ||
+    t.closest(".rv-archive-load-clean") ||
+    t.closest(".rv-archive-delete-clean") ||
+    t.closest("[data-filename]") ||
+    t.closest("#rv-archive") ||
+    t.closest("#rv-refresh-history") ||
+    t.closest("#rv-archive-create-clean") ||
+    t.closest("#rv-archive-refresh-clean")
+  ) {
+    e.preventDefault();
+  }
+}, true);
+
+document.addEventListener("submit", (e) => {
+  const t = e.target;
+  if (t && typeof t.closest === "function" && t.closest("#" + ROOT_ID)) {
+    e.preventDefault();
+  }
+}, true);
+
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", boot);
   } else {
     boot();
+  }
+
+  })();
+
+
+/* RV_NEW_ARCHIVE_PANEL */
+(function () {
+  function escapeHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  async function rvFetchJson(url, options = {}) {
+    const res = await fetch(url, options);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    return data;
+  }
+
+  function buildPanel() {
+    const oldBtn = document.querySelector("#rv-archive");
+    const oldList = document.querySelector("#rv-history, #rv-history-list");
+    const archiveHeader = Array.from(document.querySelectorAll("h3")).find(el => (el.textContent || "").trim() === "Archive");
+
+    if (!oldBtn || !archiveHeader) return false;
+    if (document.querySelector("#rv-archive-panel-clean")) return true;
+
+    oldBtn.style.display = "none";
+    if (oldList) oldList.style.display = "none";
+
+    const panel = document.createElement("div");
+    panel.id = "rv-archive-panel-clean";
+    panel.style.marginTop = "10px";
+
+    panel.innerHTML = `
+      <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px;">
+        <button type="button" id="rv-archive-create-clean" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Create Archive</button>
+        <button type="button" id="rv-archive-refresh-clean" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Refresh Archive</button>
+        <div id="rv-archive-status-clean" style="font-size:12px; opacity:.85;"></div>
+      </div>
+      <div id="rv-archive-list-clean"></div>
+    `;
+
+    const container = archiveHeader.parentElement ? archiveHeader.parentElement.parentElement : null;
+    if (container) {
+      container.appendChild(panel);
+    } else {
+      archiveHeader.insertAdjacentElement("afterend", panel);
+    }
+
+    return true;
+  }
+
+  function setArchiveStatus(text) {
+    const el = document.querySelector("#rv-archive-status-clean");
+    if (el) el.textContent = text || "";
+  }
+
+  function renderArchives(items) {
+    const list = document.querySelector("#rv-archive-list-clean");
+    if (!list) return;
+
+    if (!Array.isArray(items) || !items.length) {
+      list.innerHTML = `<div style="opacity:.75;">No archived sessions yet.</div>`;
+      return;
+    }
+
+    list.innerHTML = items.map((item) => {
+      const speakers = Array.isArray(item && item.speakers) ? item.speakers.filter(Boolean) : [];
+      const title = speakers.length ? speakers.join(" × ") : String((item && item.filename) || "Archived session");
+
+      const metaBits = [];
+      if (item && item.created_at) {
+        try {
+          metaBits.push(new Date(item.created_at).toLocaleString());
+        } catch (e) {}
+      }
+      if (item && item.session_id) metaBits.push(String(item.session_id));
+
+      const meta = metaBits.join(" • ");
+      const filename = String((item && item.filename) || "");
+
+      return `
+        <div style="
+          margin-bottom:10px;
+          padding:10px 12px;
+          border:1px solid #3b2b6b;
+          border-radius:12px;
+          background:rgba(24,18,44,.88);
+        ">
+          <div style="font-weight:700; color:#f3e8ff; margin-bottom:4px;">${escapeHtml(title)}</div>
+          <div style="font-size:12px; opacity:.82; margin-bottom:6px;">${escapeHtml(meta)}</div>
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+            ${filename ? `<div style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;"><button type="button" class="rv-archive-load-clean" data-filename="${escapeHtml(filename)}" style="padding:7px 10px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Load</button><button type="button" class="rv-archive-delete-clean" data-filename="${escapeHtml(filename)}" style="padding:7px 10px; border-radius:10px; cursor:pointer; border:1px solid rgba(239,68,68,.35); background:rgba(239,68,68,.12); color:#fecaca; font-weight:700;">Delete 🗑️</button></div>` : ""}
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  async function loadArchives() {
+    setArchiveStatus("Loading...");
+    const data = await rvFetchJson("/api/plugin/rendezvous/transcripts");
+    renderArchives(Array.isArray(data.transcripts) ? data.transcripts : []);
+    setArchiveStatus("Ready");
+  }
+
+  async function createArchive() {
+    setArchiveStatus("Creating archive...");
+    await rvFetchJson("/api/plugin/rendezvous/history/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    await loadArchives();
+    setArchiveStatus("Archive created.");
+  }
+
+  async function deleteArchive(filename) {
+    setArchiveStatus(`Deleting: ${filename}`);
+    await rvFetchJson("/api/plugin/rendezvous/history/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename })
+    });
+    await loadArchives();
+    setArchiveStatus("Archive deleted.");
+  }
+
+  async function init() {
+    if (!buildPanel()) return;
+
+    const createBtn = document.querySelector("#rv-archive-create-clean");
+    const refreshBtn = document.querySelector("#rv-archive-refresh-clean");
+    const list = document.querySelector("#rv-archive-list-clean");
+
+    if (createBtn) {
+      createBtn.onclick = async () => {
+        try {
+          createBtn.disabled = true;
+          await createArchive();
+        } catch (err) {
+          console.error(err);
+          setArchiveStatus(`Create failed: ${err.message || err}`);
+        } finally {
+          createBtn.disabled = false;
+        }
+      };
+    }
+
+    if (refreshBtn) {
+      refreshBtn.onclick = async () => {
+        try {
+          refreshBtn.disabled = true;
+          await loadArchives();
+        } catch (err) {
+          console.error(err);
+          setArchiveStatus(`Refresh failed: ${err.message || err}`);
+        } finally {
+          refreshBtn.disabled = false;
+        }
+      };
+    }
+
+    if (list) {
+      list.onclick = async (e) => {
+        const loadBtn = e.target.closest(".rv-archive-load-clean");
+        if (loadBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+const filename = loadBtn.getAttribute("data-filename") || "";
+          if (!filename) {
+            setArchiveStatus("Load failed: empty filename");
+            return;
+          }
+          try {
+            const data = await window.__rvApi("history/load", {
+              method: "POST",
+              body: JSON.stringify({ filename })
+            });
+            if (!data || data.ok === false) {
+              throw new Error((data && data.error) || "Load failed");
+            }
+            const entry = (data && data.entry) || {};
+
+            const syncSelect = (selector, wanted) => {
+              const el = document.querySelector(selector);
+              if (!el || !wanted) return;
+              const target = String(wanted).trim().toLowerCase();
+              const options = Array.from(el.options || []);
+
+              let match = options.find(opt => String(opt.value || "").trim().toLowerCase() === target);
+              if (!match) match = options.find(opt => String(opt.textContent || "").trim().toLowerCase() === target);
+              if (!match) match = options.find(opt => {
+                const txt = String(opt.textContent || "").trim().toLowerCase();
+                return txt.startsWith(target + " —") || txt.startsWith(target + " -") || txt.startsWith(target + " ");
+              });
+
+              if (match) {
+                el.value = match.value;
+                el.dispatchEvent(new Event("change", { bubbles: true }));
+              }
+            };
+
+            const syncField = (selector, value) => {
+              const el = document.querySelector(selector);
+              if (!el || value == null || value === "") return;
+              el.value = String(value);
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+            };
+
+            if (typeof window.__rvRefreshState === "function") {
+              await window.__rvRefreshState();
+            }
+
+            syncSelect("#rv-persona-1", entry.persona_1);
+            syncSelect("#rv-persona-2", entry.persona_2);
+            syncField("#rv-scene", entry.scene);
+
+            const turnsEachEl = document.querySelector("#rv-turns-each");
+            if (turnsEachEl && entry.messages_per_batch) {
+              const turnsEach = String(Math.max(1, Math.round(Number(entry.messages_per_batch) / 2)));
+              if (Array.from(turnsEachEl.options || []).some(opt => String(opt.value) === turnsEach)) {
+                turnsEachEl.value = turnsEach;
+                turnsEachEl.dispatchEvent(new Event("change", { bubbles: true }));
+              }
+            }
+
+            const pair = [entry.persona_1, entry.persona_2].filter(Boolean).join(" × ");
+            setArchiveStatus(pair ? `Archive loaded: ${pair}` : "Archive loaded.");
+          } catch (err) {
+            console.error("Archive load failed:", err);
+            setArchiveStatus(`Load failed: ${err.message || err}`);
+          }
+          return;
+        }
+
+        const btn = e.target.closest(".rv-archive-delete-clean");
+        if (!btn) return;
+
+        const filename = btn.getAttribute("data-filename") || "";
+        if (!filename) return;
+
+        const ok = window.confirm(`Delete archive?\n\n${filename}`);
+        if (!ok) return;
+
+        try {
+          btn.disabled = true;
+          await deleteArchive(filename);
+        } catch (err) {
+          console.error(err);
+          setArchiveStatus(`Delete failed: ${err.message || err}`);
+        } finally {
+          btn.disabled = false;
+        }
+      };
+    }
+
+    try {
+      await loadArchives();
+    } catch (err) {
+      console.error(err);
+      setArchiveStatus(`Initial load failed: ${err.message || err}`);
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    init();
   }
 })();

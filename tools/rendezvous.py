@@ -7,8 +7,8 @@ import requests
 import urllib3
 
 ENABLED = True
-EMOJI = "☕"
-AVAILABLE_FUNCTIONS = ["rendezvous"]
+EMOJI = "🍺"
+AVAILABLE_FUNCTIONS = ["rendezvous", "sessions", "latest", "open", "pick"]
 
 TOOLS = [
     {
@@ -22,7 +22,7 @@ TOOLS = [
                 "properties": {
                     "action": {
                         "type": "string",
-                        "description": "One of: start, continue, user_message, end"
+                        "description": "One of: start, continue, user_message, end, list sessions, get latest, open, pick"
                     },
                     "persona_1": {
                         "type": "string",
@@ -43,9 +43,77 @@ TOOLS = [
                     "messages_per_batch": {
                         "type": "integer",
                         "description": "How many total persona messages before pausing"
+                    },
+                    "index": {
+                        "type": "integer",
+                        "description": "Transcript index for pick (0 = newest)"
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Transcript filename for open"
                     }
                 },
                 "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "is_local": True,
+        "function": {
+            "name": "sessions",
+            "description": "List archived rendezvous sessions.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "is_local": True,
+        "function": {
+            "name": "latest",
+            "description": "Open the latest archived rendezvous session.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "is_local": True,
+        "function": {
+            "name": "open",
+            "description": "Open an archived rendezvous session by filename.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Transcript filename to open"
+                    }
+                },
+                "required": ["filename"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "is_local": True,
+        "function": {
+            "name": "pick",
+            "description": "Open an archived rendezvous session by index (0 = newest).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "index": {
+                        "type": "integer",
+                        "description": "Transcript index to open (0 = newest)"
+                    }
+                },
+                "required": ["index"]
             }
         }
     }
@@ -62,6 +130,138 @@ SETTINGS_HELP = {
     "RENDEZVOUS_MAX_BATCH": "Maximum total number of persona messages before pausing.",
     "RENDEZVOUS_USER_NAME": "Label shown when the user speaks in the transcript."
 }
+
+
+
+TRANSCRIPTS_DIR = Path("/app/user/rendezvous_data/transcripts")
+
+
+def _safe_name(value: str) -> str:
+    value = (value or "").strip().lower()
+    cleaned = []
+    for ch in value:
+        if ch.isalnum():
+            cleaned.append(ch)
+        elif ch in (" ", "-", "_"):
+            cleaned.append("_")
+    out = "".join(cleaned).strip("_")
+    while "__" in out:
+        out = out.replace("__", "_")
+    return out or "session"
+
+
+def _speaker_name(item) -> str:
+    if not isinstance(item, dict):
+        return ""
+    for key in ("speaker", "name", "persona", "role"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _archive_transcript():
+    transcript = list(STATE.get("transcript") or [])
+    if not transcript:
+        return None
+
+    from datetime import datetime, timezone
+
+    TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    speakers = []
+    for item in transcript:
+        name = _speaker_name(item)
+        if name and name not in speakers:
+            speakers.append(name)
+
+    ts = datetime.now(timezone.utc)
+    stamp = ts.strftime("%Y%m%d_%H%M%S")
+    left = _safe_name(speakers[0] if len(speakers) > 0 else "session")
+    right = _safe_name(speakers[1] if len(speakers) > 1 else "transcript")
+    filename = f"{stamp}_{left}_{right}.json"
+    out_path = TRANSCRIPTS_DIR / filename
+
+    payload = {
+        "session_id": stamp,
+        "created_at": ts.isoformat(),
+        "plugin": "rendezvous",
+        "speakers": speakers,
+        "transcript": transcript,
+    }
+
+    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+    return filename
+
+
+def _list_archived_transcripts():
+    if not TRANSCRIPTS_DIR.exists():
+        return []
+
+    items = []
+    for path in sorted(TRANSCRIPTS_DIR.glob("*.json"), reverse=True):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+
+        items.append({
+            "filename": path.name,
+            "created_at": payload.get("created_at", ""),
+            "speakers": payload.get("speakers", []),
+            "session_id": payload.get("session_id", ""),
+            "size": path.stat().st_size,
+        })
+
+    return items
+
+
+def _read_archived_transcript(filename: str):
+    if not filename:
+        return None
+    safe = Path(filename).name
+    path = TRANSCRIPTS_DIR / safe
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _delete_archived_transcript(filename: str):
+    if not filename:
+        return False
+    safe = Path(filename).name
+    path = TRANSCRIPTS_DIR / safe
+    if not path.exists() or not path.is_file():
+        return False
+    try:
+        path.unlink()
+        return True
+    except Exception:
+        return False
+
+
+def _latest_archived_transcript():
+    items = _list_archived_transcripts()
+    if not items:
+        return None
+    return _read_archived_transcript(items[0]["filename"])
+
+
+def _archived_transcript_by_index(index_value):
+    try:
+        idx = int(index_value)
+    except Exception:
+        return None
+
+    items = _list_archived_transcripts()
+    if idx < 0 or idx >= len(items):
+        return None
+
+    return _read_archived_transcript(items[idx]["filename"])
+
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -572,7 +772,7 @@ def _cleanup():
 
 
 def execute(function_name, arguments, config, plugin_settings=None):
-    if function_name != "rendezvous":
+    if function_name not in AVAILABLE_FUNCTIONS:
         return f"Unknown function: {function_name}", False
 
     plugin_settings = plugin_settings or {}
@@ -583,6 +783,43 @@ def execute(function_name, arguments, config, plugin_settings=None):
 
     try:
         action = _clean_text(arguments.get("action", "")).lower()
+        alias_actions = {
+            "sessions": "list sessions",
+            "latest": "get latest",
+            "open": "open",
+            "pick": "pick",
+        }
+        if function_name in alias_actions:
+            action = alias_actions[function_name]
+
+
+
+        if action in ("list_transcripts", "list sessions"):
+            return json.dumps(_list_archived_transcripts(), ensure_ascii=False), True
+
+        if action in ("get_latest_transcript", "get latest"):
+            payload = _latest_archived_transcript()
+            if not payload:
+                return "No archived transcripts found", False
+            return json.dumps(payload, ensure_ascii=False), True
+
+        if action in ("get_transcript_by_index", "pick"):
+            raw_index = arguments.get("index", None)
+            if raw_index is None or raw_index == "":
+                return "index is required", False
+            payload = _archived_transcript_by_index(raw_index)
+            if not payload:
+                return f"Transcript not found at index: {raw_index}", False
+            return json.dumps(payload, ensure_ascii=False), True
+
+        if action in ("get_transcript", "open"):
+            filename = _clean_text(arguments.get("filename", ""))
+            if not filename:
+                return "filename is required", False
+            payload = _read_archived_transcript(filename)
+            if not payload:
+                return f"Transcript not found: {filename}", False
+            return json.dumps(payload, ensure_ascii=False), True
 
         if action == "start":
             persona_1 = _clean_text(arguments.get("persona_1", ""))
@@ -653,8 +890,12 @@ def execute(function_name, arguments, config, plugin_settings=None):
             return _format_transcript(), True
 
         if action == "end":
+            archived_name = None
             if STATE["active"]:
+                archived_name = _archive_transcript()
                 _cleanup()
+            if archived_name:
+                return f"Rendezvous ended. Archived transcript: {archived_name}", True
             return "Rendezvous ended.", True
 
         return "Unknown action", False

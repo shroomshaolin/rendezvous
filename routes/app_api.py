@@ -11,6 +11,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 TOOL_PATH = PLUGIN_ROOT / "tools" / "rendezvous.py"
 DATA_DIR = PLUGIN_ROOT / "data"
 HISTORY_FILE = DATA_DIR / "history.json"
+TRANSCRIPTS_DIR = Path("/app/user/rendezvous_data/transcripts")
 
 _RENDEZVOUS_TOOL = None
 
@@ -335,52 +336,407 @@ async def get_history(request=None, body=None, **kwargs):
 
 async def save_history(request=None, body=None, **kwargs):
     payload = await _get_payload(body=body, request=request)
-    label = str(payload.get("label", "")).strip()
+    _ = str(payload.get("label", "")).strip()  # ignored; transcript files use tool naming
 
-    entry = _current_session_archive(label=label)
-    if not entry:
+    tool = _get_tool_module()
+    archiver = getattr(tool, "_archive_transcript", None)
+
+    if not callable(archiver):
+        return JSONResponse({"ok": False, "error": "Archive creation unavailable"}, status_code=500)
+
+    filename = archiver()
+    if not filename:
         return JSONResponse({"ok": False, "error": "Nothing to archive"}, status_code=400)
 
-    entries = _load_history_entries()
-    entries.insert(0, entry)
-    entries = entries[:100]
-    _save_history_entries(entries)
+    items = tool._list_archived_transcripts() if hasattr(tool, "_list_archived_transcripts") else []
 
     return JSONResponse({
         "ok": True,
-        "saved": _history_summary(entry),
-        "history": _history_summaries(entries)
+        "filename": filename,
+        "transcripts": items
     })
-
 
 async def load_history(request=None, body=None, **kwargs):
     payload = await _get_payload(body=body, request=request)
+
     entry_id = str(payload.get("id", "")).strip()
+    filename = str(payload.get("filename", "")).strip()
+    session_id = str(payload.get("session_id", "")).strip()
+    index_raw = str(payload.get("index", "")).strip()
 
+    tool = _get_tool_module()
+
+    def _resume_from_entry(entry):
+        transcript = list(entry.get("transcript") or [])
+        persona_1 = str(entry.get("persona_1", "") or "")
+        persona_2 = str(entry.get("persona_2", "") or "")
+        speakers = list(entry.get("speakers") or [])
+        if not persona_1 and len(speakers) > 0:
+            persona_1 = str(speakers[0]).strip()
+        if not persona_2 and len(speakers) > 1:
+            persona_2 = str(speakers[1]).strip()
+        scene = str(entry.get("scene", "") or "")
+        messages_per_batch = int(entry.get("messages_per_batch", 4) or 4)
+        turn_count = int(entry.get("turn_count", 0) or 0)
+
+        next_speaker = persona_1
+        if transcript:
+            last = transcript[-1]
+            last_speaker = ""
+            if isinstance(last, dict):
+                for key in ("speaker", "name", "persona", "role"):
+                    value = last.get(key)
+                    if isinstance(value, str) and value.strip():
+                        last_speaker = value.strip()
+                        break
+
+            if last_speaker == persona_1 and persona_2:
+                next_speaker = persona_2
+            elif last_speaker == persona_2 and persona_1:
+                next_speaker = persona_1
+
+        tool.STATE["active"] = True
+        tool.STATE["persona_1"] = persona_1
+        tool.STATE["persona_2"] = persona_2
+        tool.STATE["chat_1"] = persona_1
+        tool.STATE["chat_2"] = persona_2
+        tool.STATE["scene"] = scene
+        tool.STATE["messages_per_batch"] = messages_per_batch
+        tool.STATE["turn_count"] = turn_count
+        tool.STATE["transcript"] = transcript
+        tool.STATE["history"] = list(transcript)
+        tool.STATE["next_speaker"] = next_speaker
+
+        transcript_text = entry.get("transcript_text", "")
+        formatter = getattr(tool, "_format_transcript", None)
+        if callable(formatter):
+            try:
+                transcript_text = formatter()
+            except Exception:
+                transcript_text = entry.get("transcript_text", "")
+
+        tool.STATE["transcript_text"] = transcript_text
+
+        hydrated_entry = dict(entry)
+        hydrated_entry["transcript_text"] = transcript_text
+
+        return JSONResponse({
+            "ok": True,
+            "entry": hydrated_entry,
+            "resumed": True
+        })
+
+
+    def _entry_from_archive_payload(data, fallback_name=""):
+        if not isinstance(data, dict):
+            return None
+
+        participants = data.get("participants") or data.get("speakers") or []
+        p1 = str(data.get("persona_1") or (participants[0] if len(participants) > 0 else "") or "")
+        p2 = str(data.get("persona_2") or (participants[1] if len(participants) > 1 else "") or "")
+        transcript = data.get("transcript") or data.get("messages") or []
+
+        return {
+            "id": str(data.get("id") or Path(str(fallback_name or "archive")).stem),
+            "title": str(data.get("title") or f"{p1 or 'Unknown'} ↔ {p2 or 'Unknown'}"),
+            "created_at": str(data.get("created_at") or data.get("saved_at") or ""),
+            "persona_1": p1,
+            "persona_2": p2,
+            "speakers": participants,
+            "scene": str(data.get("scene") or ""),
+            "messages_per_batch": int(data.get("messages_per_batch", 4) or 4),
+            "turn_count": int(data.get("turn_count", 0) or 0),
+            "transcript": transcript if isinstance(transcript, list) else [],
+            "transcript_text": str(data.get("transcript_text") or ""),
+        }
+
+    archive_reader = getattr(tool, "_read_archived_transcript", None)
+    archive_by_index = getattr(tool, "_archived_transcript_by_index", None)
+    archive_list = getattr(tool, "_list_archived_transcripts", None)
+
+    # Fast path: load directly by filename from the tool helper.
+    if filename and callable(archive_reader):
+        direct = archive_reader(filename)
+        entry = _entry_from_archive_payload(direct, fallback_name=filename)
+        if entry is not None:
+            return _resume_from_entry(entry)
+
+    # Fast path: load directly by visible archive index.
+    if index_raw != "" and callable(archive_by_index):
+        direct = archive_by_index(index_raw)
+        entry = _entry_from_archive_payload(direct, fallback_name=f"archive_{index_raw}")
+        if entry is not None:
+            return _resume_from_entry(entry)
+
+    # Fast path: map session_id -> filename -> archive helper.
+    if session_id and callable(archive_list) and callable(archive_reader):
+        try:
+            items = archive_list() or []
+        except Exception:
+            items = []
+
+        for item in items:
+            item_session_id = str(item.get("session_id", "") or item.get("id", "") or "")
+            item_filename = str(item.get("filename", "") or "")
+            if item_session_id and item_session_id == session_id and item_filename:
+                direct = archive_reader(item_filename)
+                entry = _entry_from_archive_payload(direct, fallback_name=item_filename)
+                if entry is not None:
+                    return _resume_from_entry(entry)
+
+
+    # 1) Legacy history.json resume by id
     entries = _load_history_entries()
-    for entry in entries:
-        if entry.get("id") == entry_id:
-            return JSONResponse({
-                "ok": True,
-                "entry": entry
-            })
+    if entry_id:
+        for entry in entries:
+            if entry.get("id") == entry_id:
+                return _resume_from_entry(entry)
 
-    return JSONResponse({"ok": False, "error": "Archive entry not found"}, status_code=404)
+    # 2) Transcript-file resume by filename / session_id / index
+    items = tool._list_archived_transcripts() if hasattr(tool, "_list_archived_transcripts") else []
 
+    selected = None
 
-async def delete_history(request=None, body=None, **kwargs):
-    payload = await _get_payload(body=body, request=request)
-    entry_id = str(payload.get("id", "")).strip()
+    if index_raw != "":
+        idx = _to_int(index_raw, -1)
+        if 0 <= idx < len(items):
+            selected = items[idx]
 
-    entries = _load_history_entries()
-    new_entries = [e for e in entries if e.get("id") != entry_id]
+    if selected is None:
+        for item in items:
+            item_filename = str(item.get("filename", "") or "")
+            item_session_id = str(item.get("session_id", "") or item.get("id", "") or "")
+            if filename and item_filename == filename:
+                selected = item
+                break
+            if session_id and item_session_id == session_id:
+                selected = item
+                break
 
-    if len(new_entries) == len(entries):
-        return JSONResponse({"ok": False, "error": "Archive entry not found"}, status_code=404)
+    candidate_dirs = []
+    seen = set()
 
-    _save_history_entries(new_entries)
+    def add_dir(path_str):
+        if not path_str:
+            return
+        try:
+            d = Path(path_str)
+        except Exception:
+            return
+        key = str(d)
+        if key not in seen:
+            seen.add(key)
+            candidate_dirs.append(d)
+
+    add_dir("/app/user/rendezvous_data/transcripts")
+    add_dir("/app/user/plugins/rendezvous/data/transcripts")
+    add_dir("/app/user/plugins/rendezvous/data/archives")
+    add_dir(getattr(tool, "TRANSCRIPTS_DIR", ""))
+    add_dir(getattr(tool, "TRANSCRIPT_DIR", ""))
+    add_dir(getattr(tool, "ARCHIVE_DIR", ""))
+
+    names_to_try = []
+
+    def push_name(name):
+        name = str(name or "").strip()
+        if name and name not in names_to_try:
+            names_to_try.append(name)
+
+    if selected is not None:
+        push_name(selected.get("filename", ""))
+        push_name(selected.get("session_id", ""))
+        push_name(selected.get("id", ""))
+
+    push_name(filename)
+    push_name(session_id)
+
+    target = None
+    for d in candidate_dirs:
+        if not d.exists():
+            continue
+        for name in names_to_try:
+            direct = d / name
+            if direct.exists() and direct.is_file():
+                target = direct
+                break
+            if "." not in name:
+                for ext in (".json", ".txt", ".md"):
+                    probe = d / f"{name}{ext}"
+                    if probe.exists() and probe.is_file():
+                        target = probe
+                        break
+            if target is not None:
+                break
+        if target is not None:
+            break
+
+    if target is not None:
+        try:
+            raw = target.read_text(encoding="utf-8")
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": f"Failed to read archive: {e}"}, status_code=500)
+
+        entry = None
+
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                participants = data.get("participants") or []
+                p1 = str(data.get("persona_1") or (participants[0] if len(participants) > 0 else "") or "")
+                p2 = str(data.get("persona_2") or (participants[1] if len(participants) > 1 else "") or "")
+                transcript = data.get("transcript") or data.get("messages") or []
+
+                entry = {
+                    "id": str(data.get("id") or target.stem),
+                    "title": str(data.get("title") or f"{p1 or 'Unknown'} ↔ {p2 or 'Unknown'}"),
+                    "created_at": str(data.get("created_at") or data.get("saved_at") or ""),
+                    "persona_1": p1,
+                    "persona_2": p2,
+                    "scene": str(data.get("scene") or ""),
+                    "messages_per_batch": int(data.get("messages_per_batch", 4) or 4),
+                    "turn_count": int(data.get("turn_count", 0) or 0),
+                    "transcript": transcript if isinstance(transcript, list) else [],
+                    "transcript_text": str(data.get("transcript_text") or ""),
+                }
+        except Exception:
+            entry = None
+
+        if entry is not None:
+            return _resume_from_entry(entry)
+
+        return JSONResponse({
+            "ok": False,
+            "error": f"Archive file found but could not be resumed: {target.name}"
+        }, status_code=400)
 
     return JSONResponse({
-        "ok": True,
-        "history": _history_summaries(new_entries)
-    })
+        "ok": False,
+        "error": f"Archive entry not found | id={entry_id!r} | filename={filename!r} | session_id={session_id!r} | index={index_raw!r} | items={len(items)}"
+    }, status_code=404)
+async def delete_history(request=None, body=None, **kwargs):
+    payload = await _get_payload(body=body, request=request)
+
+    filename = str(payload.get("filename", "")).strip()
+    session_id = str(payload.get("session_id", "")).strip()
+    index_raw = str(payload.get("index", "")).strip()
+
+    tool = _get_tool_module()
+    items = tool._list_archived_transcripts() if hasattr(tool, "_list_archived_transcripts") else []
+
+    # Build a list of candidate transcript directories to search.
+    candidate_dirs = []
+    seen = set()
+
+    def add_dir(path_str):
+        try:
+            d = Path(path_str)
+        except Exception:
+            return
+        key = str(d)
+        if key not in seen:
+            seen.add(key)
+            candidate_dirs.append(d)
+
+    add_dir("/app/user/rendezvous_data/transcripts")
+    add_dir("/app/user/plugins/rendezvous/data/transcripts")
+
+    for base in (Path("/app/user/plugins"), Path("/app/user/plugin-saves")):
+        if base.exists():
+            for d in base.glob("rendezvous*/data/transcripts"):
+                add_dir(str(d))
+
+    target = None
+
+    # 1) Prefer row index from the current transcript list.
+    if index_raw:
+        try:
+            idx = int(index_raw)
+        except Exception:
+            idx = -1
+
+        if 0 <= idx < len(items):
+            fname = str(items[idx].get("filename", "")).strip()
+            if fname:
+                filename = fname
+
+    # 2) Delete by filename across every known transcript store.
+    if filename:
+        safe = Path(filename).name
+        for d in candidate_dirs:
+            candidate = d / safe
+            if candidate.exists() and candidate.is_file():
+                target = candidate
+                break
+
+    # 3) Fallback: match by session_id across every known transcript store.
+    if target is None and session_id:
+        for d in candidate_dirs:
+            if not d.exists():
+                continue
+            for candidate in sorted(d.glob("*.json"), reverse=True):
+                try:
+                    payload2 = json.loads(candidate.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if str(payload2.get("session_id", "")).strip() == session_id:
+                    target = candidate
+                    break
+            if target is not None:
+                break
+
+    # 4) If we found a transcript file, delete it and refresh transcript list.
+    if target is not None:
+        try:
+            target.unlink()
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": f"Delete failed: {e}"}, status_code=500)
+
+        items = tool._list_archived_transcripts() if hasattr(tool, "_list_archived_transcripts") else []
+        return JSONResponse({
+            "ok": True,
+            "transcripts": items
+        })
+
+    # 5) Legacy history.json delete path, only if no transcript identifier was given.
+    if not filename and not session_id and not index_raw:
+        entry_id = str(payload.get("id", "")).strip()
+
+        entries = _load_history_entries()
+        new_entries = [e for e in entries if e.get("id") != entry_id]
+
+        if len(new_entries) == len(entries):
+            return JSONResponse({"ok": False, "error": "Archive entry not found"}, status_code=404)
+
+        _save_history_entries(new_entries)
+
+        return JSONResponse({
+            "ok": True,
+            "history": _history_summaries(new_entries)
+        })
+
+    return JSONResponse({
+        "ok": False,
+        "error": f"Archive entry not found | filename={filename!r} | session_id={session_id!r} | index={index_raw!r} | items={len(items)}"
+    }, status_code=404)
+
+
+async def delete_transcript_http(request=None, body=None, settings=None, **kwargs):
+    filename = ""
+
+    if request is not None:
+        try:
+            filename = str(request.query_params.get("filename", "")).strip()
+        except Exception:
+            filename = ""
+
+    if not filename and isinstance(body, dict):
+        filename = str(body.get("filename", "")).strip()
+
+    return await delete_history(body={"filename": filename})
+    
+def list_transcripts(request=None, body=None, settings=None, **kwargs):
+    tool = _get_tool_module()
+    if hasattr(tool, "_list_archived_transcripts"):
+        return {"ok": True, "transcripts": tool._list_archived_transcripts()}
+    return {"ok": True, "transcripts": []}
+

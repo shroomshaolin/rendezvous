@@ -1,12 +1,13 @@
 {
   "name": "rendezvous",
   "display_name": "Rendezvous",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Two-person persona rendezvous app",
   "author": "Donna",
   "capabilities": {
     "tools": [
-      "tools/rendezvous.py"
+      "tools/rendezvous.py",
+      "tools/archive_reader.py"
     ],
     "routes": [
       {
@@ -58,11 +59,31 @@
         "method": "POST",
         "path": "history/delete",
         "handler": "routes/app_api.py:delete_history"
+      },
+      {
+        "method": "POST",
+        "path": "transcript/delete",
+        "handler": "routes/app_api.py:delete_transcript"
+      },
+      {
+        "method": "POST",
+        "path": "transcripts/delete",
+        "handler": "routes/app_api.py:delete_transcript"
+      },
+      {
+        "method": "GET",
+        "path": "transcripts/delete",
+        "handler": "routes/app_api.py:delete_transcript_http"
+      },
+      {
+        "method": "GET",
+        "path": "transcripts",
+        "handler": "routes/app_api.py:list_transcripts"
       }
     ],
     "app": {
-      "icon": "🍺"
+      "icon": "\ud83c\udf7a"
     }
   },
-  "icon": "🍺"
+  "icon": "\ud83c\udf7a"
 }
