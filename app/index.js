@@ -1342,3 +1342,445 @@ const filename = loadBtn.getAttribute("data-filename") || "";
     init();
   }
 })();
+
+/* RV_LAST_USED_PATCH */
+(() => {
+  if (window.__RV_LAST_USED_PATCH__) return;
+  window.__RV_LAST_USED_PATCH__ = true;
+
+  const KEY = "rendezvous:lastUsedSetup";
+
+  function low(v) {
+    return String(v || "").trim().toLowerCase();
+  }
+
+  function onRendezvousPage() {
+    const hash = low(location.hash);
+    if (hash.includes("/apps/rendezvous")) return true;
+    return Array.from(document.querySelectorAll("h1,h2,h3,h4"))
+      .some(el => low(el.textContent).includes("rendezvous"));
+  }
+
+  function findLabel(text) {
+    const want = low(text);
+    const nodes = Array.from(document.querySelectorAll("label, div, span, p, strong, h1, h2, h3, h4"));
+    return nodes.find(el => low(el.textContent) === want);
+  }
+
+  function nextControlAfter(labelText) {
+    const label = findLabel(labelText);
+    if (!label) return null;
+
+    let n = label.nextElementSibling;
+    while (n) {
+      if (n.matches && n.matches("select, textarea, input")) return n;
+      if (n.querySelector) {
+        const found = n.querySelector("select, textarea, input");
+        if (found) return found;
+      }
+      n = n.nextElementSibling;
+    }
+    return null;
+  }
+
+  function controls() {
+    return {
+      p1: nextControlAfter("Persona 1"),
+      p2: nextControlAfter("Persona 2"),
+      scene: nextControlAfter("Scene seed"),
+      tempo: nextControlAfter("Tempo")
+    };
+  }
+
+  function fireChange(el) {
+    if (!el) return;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function setSelectByToken(select, token) {
+    if (!select || !token) return false;
+    const want = low(token);
+
+    for (const opt of Array.from(select.options || [])) {
+      const hay = low((opt.value || "") + " " + (opt.textContent || ""));
+      if (hay.includes(want)) {
+        select.value = opt.value;
+        fireChange(select);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function loadState() {
+    try {
+      return JSON.parse(localStorage.getItem(KEY) || "{}");
+    } catch {
+      return {};
+    }
+  }
+
+  function saveState() {
+    if (!onRendezvousPage()) return;
+
+    const { p1, p2, scene, tempo } = controls();
+    const state = {
+      persona1: p1 ? (p1.value || "") : "",
+      persona2: p2 ? (p2.value || "") : "",
+      scene: scene ? (scene.value || "") : "",
+      tempo: tempo ? (tempo.value || "") : ""
+    };
+
+    localStorage.setItem(KEY, JSON.stringify(state));
+  }
+
+  function applyState(state) {
+    if (!state || !onRendezvousPage()) return;
+
+    const { p1, p2, scene, tempo } = controls();
+
+    if (p1 && state.persona1) {
+      if (!setSelectByToken(p1, state.persona1)) {
+        p1.value = state.persona1;
+        fireChange(p1);
+      }
+    }
+
+    if (p2 && state.persona2) {
+      if (!setSelectByToken(p2, state.persona2)) {
+        p2.value = state.persona2;
+        fireChange(p2);
+      }
+    }
+
+    if (scene && state.scene && !String(scene.value || "").trim()) {
+      scene.value = state.scene;
+      fireChange(scene);
+    }
+
+    if (tempo && state.tempo) {
+      if (!setSelectByToken(tempo, state.tempo)) {
+        tempo.value = state.tempo;
+        fireChange(tempo);
+      }
+    }
+  }
+
+  function shouldRestore(state) {
+    const { p1, p2, scene } = controls();
+    if (!p1 || !p2) return false;
+
+    const p1LooksDefault = low(p1.value).includes("dawn");
+    const p2LooksDefault = low(p2.value).includes("fox");
+    const sceneEmpty = scene ? !String(scene.value || "").trim() : true;
+
+    return !!(
+      state &&
+      (state.persona1 || state.persona2 || state.scene || state.tempo) &&
+      (p1LooksDefault || p2LooksDefault || sceneEmpty)
+    );
+  }
+
+  function bindControls() {
+    const { p1, p2, scene, tempo } = controls();
+    [p1, p2, scene, tempo].forEach(el => {
+      if (!el || el.dataset.rvLastUsedBound === "1") return;
+      el.addEventListener("change", saveState);
+      el.addEventListener("input", saveState);
+      el.dataset.rvLastUsedBound = "1";
+    });
+  }
+
+  function restoreIfNeeded() {
+    if (!onRendezvousPage()) return;
+    bindControls();
+
+    const state = loadState();
+    if (shouldRestore(state)) {
+      applyState(state);
+    }
+  }
+
+  function rememberArchivePairFromLoadButton(btn) {
+    const card = btn.closest("div");
+    if (!card) return;
+
+    const pairNode = Array.from(card.querySelectorAll("*")).find(el => {
+      const t = String(el.textContent || "").trim();
+      return /^[^\n]+\s+x\s+[^\n]+$/i.test(t);
+    });
+
+    if (!pairNode) return;
+
+    const m = String(pairNode.textContent || "").trim().match(/^(.+?)\s+x\s+(.+)$/i);
+    if (!m) return;
+
+    const state = loadState();
+    state.persona1 = m[1].trim();
+    state.persona2 = m[2].trim();
+    localStorage.setItem(KEY, JSON.stringify(state));
+
+    setTimeout(() => applyState(state), 50);
+    setTimeout(() => applyState(state), 300);
+    setTimeout(saveState, 500);
+  }
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest("button") : null;
+    if (!btn || !onRendezvousPage()) return;
+
+    const t = low(btn.textContent);
+
+    if (t === "load") {
+      rememberArchivePairFromLoadButton(btn);
+    }
+
+    if (
+      t.includes("start rendezvous") ||
+      t.includes("continue") ||
+      t.includes("clear session") ||
+      t.includes("save session") ||
+      t.includes("create archive")
+    ) {
+      setTimeout(saveState, 50);
+      setTimeout(saveState, 300);
+    }
+  });
+
+  window.addEventListener("hashchange", () => {
+    setTimeout(restoreIfNeeded, 50);
+    setTimeout(restoreIfNeeded, 300);
+  });
+
+  document.addEventListener("DOMContentLoaded", () => {
+    setTimeout(restoreIfNeeded, 50);
+    setTimeout(restoreIfNeeded, 300);
+  });
+
+  setInterval(() => {
+    if (!onRendezvousPage()) return;
+    bindControls();
+    restoreIfNeeded();
+  }, 800);
+})();
+
+/* RV_LOAD_SYNC_PATCH */
+(() => {
+  if (window.__RV_LOAD_SYNC_PATCH__) return;
+  window.__RV_LOAD_SYNC_PATCH__ = true;
+
+  const KEY = "rendezvous:lastUsedSetup";
+
+  function low(v) {
+    return String(v || "").trim().toLowerCase();
+  }
+
+  function findLabel(text) {
+    const want = low(text);
+    const nodes = Array.from(document.querySelectorAll("label, div, span, p, strong, h1, h2, h3, h4"));
+    return nodes.find(el => low(el.textContent) === want);
+  }
+
+  function nextControlAfter(labelText) {
+    const label = findLabel(labelText);
+    if (!label) return null;
+
+    let n = label.nextElementSibling;
+    while (n) {
+      if (n.matches && n.matches("select, textarea, input")) return n;
+      if (n.querySelector) {
+        const found = n.querySelector("select, textarea, input");
+        if (found) return found;
+      }
+      n = n.nextElementSibling;
+    }
+    return null;
+  }
+
+  function controls() {
+    return {
+      p1: nextControlAfter("Persona 1"),
+      p2: nextControlAfter("Persona 2"),
+      scene: nextControlAfter("Scene seed"),
+      tempo: nextControlAfter("Tempo")
+    };
+  }
+
+  function fireChange(el) {
+    if (!el) return;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function setSelectByToken(select, token) {
+    if (!select || !token) return false;
+    const want = low(token);
+
+    for (const opt of Array.from(select.options || [])) {
+      const hay = low((opt.value || "") + " " + (opt.textContent || ""));
+      if (hay.includes(want)) {
+        select.value = opt.value;
+        fireChange(select);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function loadStored() {
+    try {
+      return JSON.parse(localStorage.getItem(KEY) || "{}");
+    } catch {
+      return {};
+    }
+  }
+
+  function saveStored(state) {
+    const merged = { ...loadStored(), ...state };
+    localStorage.setItem(KEY, JSON.stringify(merged));
+    return merged;
+  }
+
+  function applyState(state) {
+    if (!state) return;
+
+    const tries = [0, 50, 150, 300, 700, 1200, 2000];
+
+    for (const ms of tries) {
+      setTimeout(() => {
+        const { p1, p2, scene, tempo } = controls();
+
+        if (p1 && state.persona1) {
+          if (!setSelectByToken(p1, state.persona1)) {
+            p1.value = state.persona1;
+            fireChange(p1);
+          }
+        }
+
+        if (p2 && state.persona2) {
+          if (!setSelectByToken(p2, state.persona2)) {
+            p2.value = state.persona2;
+            fireChange(p2);
+          }
+        }
+
+        if (scene && state.scene) {
+          scene.value = state.scene;
+          fireChange(scene);
+        }
+
+        if (tempo && state.tempo !== undefined && state.tempo !== null && String(state.tempo) !== "") {
+          if (!setSelectByToken(tempo, String(state.tempo))) {
+            tempo.value = String(state.tempo);
+            fireChange(tempo);
+          }
+        }
+      }, ms);
+    }
+  }
+
+  function extractState(payload, depth = 0) {
+    if (!payload || typeof payload !== "object" || depth > 5) return null;
+
+    const p1 = payload.persona_1 ?? payload.persona1 ?? payload.personaOne;
+    const p2 = payload.persona_2 ?? payload.persona2 ?? payload.personaTwo;
+    const scene = payload.scene ?? payload.scene_seed ?? payload.seed ?? "";
+    const tempo = payload.messages_per_batch ?? payload.tempo ?? payload.batch_size ?? "";
+
+    if (p1 || p2 || scene || tempo) {
+      return {
+        persona1: p1 ? String(p1) : "",
+        persona2: p2 ? String(p2) : "",
+        scene: scene ? String(scene) : "",
+        tempo: tempo !== "" ? String(tempo) : ""
+      };
+    }
+
+    if (Array.isArray(payload)) {
+      for (const item of payload) {
+        const found = extractState(item, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    for (const key of Object.keys(payload)) {
+      const found = extractState(payload[key], depth + 1);
+      if (found) return found;
+    }
+
+    return null;
+  }
+
+  function rememberFromPayload(payload) {
+    const found = extractState(payload);
+    if (!found) return;
+
+    const merged = saveStored(found);
+    applyState(merged);
+  }
+
+  function rememberFromCard(btn) {
+    const card = btn.closest("div");
+    if (!card) return;
+
+    const text = String(card.textContent || "");
+    const pair = text.match(/([A-Za-z0-9 _-]+)\s+x\s+([A-Za-z0-9 _-]+)/i);
+    if (!pair) return;
+
+    const merged = saveStored({
+      persona1: pair[1].trim(),
+      persona2: pair[2].trim()
+    });
+
+    applyState(merged);
+  }
+
+  const origFetch = window.fetch;
+  if (typeof origFetch === "function") {
+    window.fetch = async function(...args) {
+      const res = await origFetch.apply(this, args);
+      try {
+        const url = String((args[0] && args[0].url) || args[0] || "");
+        if (/history\/load|\/load\b|latest|open|pick/i.test(url)) {
+          const clone = res.clone();
+          clone.json().then(rememberFromPayload).catch(() => {});
+        }
+      } catch {}
+      return res;
+    };
+  }
+
+  const xhrOpen = XMLHttpRequest.prototype.open;
+  const xhrSend = XMLHttpRequest.prototype.send;
+
+  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+    this.__rv_url = url;
+    return xhrOpen.call(this, method, url, ...rest);
+  };
+
+  XMLHttpRequest.prototype.send = function(...args) {
+    this.addEventListener("load", () => {
+      try {
+        const url = String(this.__rv_url || "");
+        if (/history\/load|\/load\b|latest|open|pick/i.test(url)) {
+          try {
+            rememberFromPayload(JSON.parse(this.responseText));
+          } catch {}
+        }
+      } catch {}
+    });
+    return xhrSend.apply(this, args);
+  };
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest("button") : null;
+    if (!btn) return;
+
+    const t = low(btn.textContent);
+    if (t === "load") {
+      rememberFromCard(btn);
+    }
+  });
+})();
