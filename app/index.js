@@ -774,14 +774,62 @@
     return data;
   }
 
+    let rvPollTimer = null;
+    let rvPollBusy = false;
+
+    function stopRvPolling() {
+      if (rvPollTimer) {
+        clearInterval(rvPollTimer);
+        rvPollTimer = null;
+      }
+    }
+
     async function refreshState() {
-    window.__rvRefreshState = refreshState;
       const data = await api("session/state");
       const s = data.state || {};
       state.viewMode = "live";
       setTranscript(s.transcript_text || "");
-      setStatus(s.active ? "Paused" : "Idle");
+      const hasTranscript = !!String(s.transcript_text || "").trim();
+      setStatus(s.active ? "Running..." : (hasTranscript ? "Paused" : "Idle"));
+      return s;
     }
+
+    async function pollUntilSettled(timeoutMs = 45000, intervalMs = 2000) {
+      stopRvPolling();
+      const deadline = Date.now() + timeoutMs;
+
+      const tick = async () => {
+        if (rvPollBusy) return;
+        rvPollBusy = true;
+        try {
+          const s = await refreshState();
+          if (!s.active || Date.now() >= deadline) {
+            stopRvPolling();
+            if (!s.active) {
+              await refreshState();
+            }
+          }
+        } catch (err) {
+          const msg = String((err && (err.message || err)) || "");
+          if (/429|Too Many Requests/i.test(msg)) {
+            console.warn("Rendezvous polling backoff:", msg);
+            return;
+          }
+          console.warn("Rendezvous polling failed:", err);
+          if (Date.now() >= deadline) {
+            stopRvPolling();
+          }
+        } finally {
+          rvPollBusy = false;
+        }
+      };
+
+      setTimeout(tick, 1200);
+      rvPollTimer = setInterval(tick, intervalMs);
+    }
+
+    window.__rvRefreshState = refreshState;
+    window.__rvStopPolling = stopRvPolling;
 
     root.querySelector("#rv-start").addEventListener("click", async () => {
       try {
@@ -800,7 +848,7 @@
           })
         });
         setTranscript(data.transcript || "");
-        setStatus("Paused");
+        pollUntilSettled().catch((err) => console.warn("Rendezvous polling start failed:", err));
       } catch (err) {
         console.error(err); setStatus("Error");
         setTranscript(String(err));
@@ -814,7 +862,7 @@
         setStatus("Continuing...");
         const data = await api("session/continue", { method: "POST" });
         setTranscript(data.transcript || "");
-        setStatus("Paused");
+        pollUntilSettled().catch((err) => console.warn("Rendezvous polling start failed:", err));
       } catch (err) {
         console.error(err); setStatus("Error");
         setTranscript(String(err));
@@ -837,7 +885,7 @@
         });
         userBox.value = "";
         setTranscript(data.transcript || "");
-        setStatus("Paused");
+        pollUntilSettled().catch((err) => console.warn("Rendezvous polling start failed:", err));
       } catch (err) {
         console.error(err); setStatus("Error");
         setTranscript(String(err));
@@ -846,6 +894,7 @@
 
     root.querySelector("#rv-end").addEventListener("click", async () => {
       try {
+        stopRvPolling();
         setStatus("Ending...");
         await api("session/end", { method: "POST" });
         userBox.value = "";
@@ -859,6 +908,7 @@
 
     root.querySelector("#rv-clear").addEventListener("click", async () => {
       try {
+        stopRvPolling();
         setStatus("Clearing...");
         try {
           await api("session/end", { method: "POST" });
@@ -945,7 +995,10 @@
         setStatus("Loading...");
         await loadPersonas();
         await loadHistory();
-        await refreshState();
+        const s = await refreshState();
+        if (s && s.active) {
+          pollUntilSettled().catch((err) => console.warn("Rendezvous polling start failed:", err));
+        }
       } catch (err) {
         console.error(err); setStatus("Error");
         setTranscript(String(err));
@@ -965,6 +1018,9 @@ window.__rvRefreshState = window.__rvRefreshState || (async () => {});
   }
 
   function unmount() {
+    if (window.__rvStopPolling) {
+      try { window.__rvStopPolling(); } catch (e) {}
+    }
     const existing = document.getElementById(ROOT_ID);
     if (existing) {
       existing.style.pointerEvents = "none";
