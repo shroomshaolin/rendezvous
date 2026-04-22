@@ -11,3 +11,5 @@ data/
 *.working_*
 *.clean_after_*
 *.disabled
+*.clean_*
+*.broken_*
