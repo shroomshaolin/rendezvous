@@ -298,18 +298,57 @@ def _slug(value):
 
 
 def _read_api_key():
-    candidates = [
+    here = Path(__file__).resolve()
+
+    root_candidates = list(here.parents) + [
+        Path("/app"),
+        Path.home(),
+        Path.home() / "sapphire",
+        Path.home() / "Sapphire",
+    ]
+
+    seen = set()
+    unique_roots = []
+    for p in root_candidates:
+        s = str(p)
+        if s not in seen:
+            seen.add(s)
+            unique_roots.append(p)
+
+    candidates = []
+    for root in unique_roots:
+        candidates.extend([
+            root / "user" / ".config" / "sapphire" / "secret_key",
+            root / ".config" / "sapphire" / "secret_key",
+            root / "sapphire-config" / "secret_key",
+            root / "user" / "sapphire-config" / "secret_key",
+        ])
+
+    candidates.extend([
         Path("/home/sapphire/.config/sapphire/secret_key"),
         Path.home() / ".config" / "sapphire" / "secret_key",
         Path.home() / "Library" / "Application Support" / "Sapphire" / "secret_key",
-    ]
-    for path in candidates:
+        Path.home() / "sapphire-config" / "secret_key",
+    ])
+
+    seen = set()
+    unique_candidates = []
+    for p in candidates:
+        s = str(p)
+        if s not in seen:
+            seen.add(s)
+            unique_candidates.append(p)
+
+    for path in unique_candidates:
         if path.exists():
             text = path.read_text(encoding="utf-8").strip()
             if text:
                 return text
-    raise RuntimeError("Could not find Sapphire secret_key")
 
+    raise RuntimeError(
+        "Could not find Sapphire secret_key. Tried: "
+        + ", ".join(str(p) for p in unique_candidates)
+    )
 
 def _api(method, path, payload=None):
     headers = {"X-API-Key": _read_api_key()}
@@ -902,3 +941,4 @@ def execute(function_name, arguments, config, plugin_settings=None):
 
     except Exception as e:
         return f"Error: {e}", False
+

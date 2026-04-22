@@ -7,10 +7,10 @@
     "plugin.json": "sha256:2c8841be17d6da0d3f581ecaa42d5a56c9a450c0a15d9dabce0a8af2f0b1b741",
     "rendezvous/app/index.js": "sha256:dddbb1eceec9b36a1999c03997c6a633ba1ff69a530605c09490071a68a7b970",
     "rendezvous/plugin.json": "sha256:491b7ea83fc73987718a945f8a9925d839d2b21609c882ca21357417b73e97b4",
-    "rendezvous/tools/rendezvous.py": "sha256:d4ea6a01c56e465194a1e8b1b3a03a8c765077bb787a17a3e016d71de0c9d0d4",
+    "rendezvous/tools/rendezvous.py": "sha256:3b62e42676ba5bd2c80099ca17c71158425d0b2c36c778485b6cd0ef27f730be",
     "routes/action.py": "sha256:d05884bc3b59c8629a3269f16bc183c51862c9b3a9600bda73413332c52d123e",
     "routes/app_api.py": "sha256:ba7334ac13e1e86cb806b0b0df6b8d20b2e662a28bd32c6e564806bf6a1d544a",
-    "tools/rendezvous.py": "sha256:46b2f19b6dfffca24fed3acb0e81a957cf351d14314d33221799e9731bc6cf18"
+    "tools/rendezvous.py": "sha256:d1ef5d0a3ce380d349fda977a3f02528ad6246d2d47d76d2d8fe2d6635ad90bb"
   },
-  "signature": "Q2V9MZwpaCJnOXcnO33dbbIfGutNbK1HcX1lLiaf70qRs5mYD+1slr8pxHOmvGBoQ/cS8gxDcBTyxkFiG9DpCA=="
+  "signature": "aejO5Zx8+DzuZF5zNWxuALff8Pw7BMAQrlsCxF8gcO+iaXKRYdSCzKWfOBYcu2VBoQU4m8yPzU2fbHuZDrRFAA=="
 }
