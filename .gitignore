@@ -13,3 +13,14 @@ data/
 *.disabled
 *.clean_*
 *.broken_*
+*.bak
+*.bak.*
+*.before_*
+*.pre_*
+*.working
+*.working_*
+*.clean_*
+*.broken_*
+*.disabled
+__pycache__/
+*.pyc
