@@ -1,4 +1,6 @@
 from pathlib import Path
+import os
+import sys
 import json
 import re
 import uuid
@@ -133,7 +135,13 @@ SETTINGS_HELP = {
 
 
 
-TRANSCRIPTS_DIR = Path("/app/user/rendezvous_data/transcripts")
+PROJECT_ROOT = next(
+    (parent for parent in Path(__file__).resolve().parents if (parent / "core").exists() and (parent / "user").exists()),
+    Path(__file__).resolve().parents[2]
+)
+USER_DIR = PROJECT_ROOT / "user"
+CORE_DIR = PROJECT_ROOT / "core"
+TRANSCRIPTS_DIR = USER_DIR / "rendezvous_data" / "transcripts"
 
 
 def _safe_name(value: str) -> str:
@@ -298,48 +306,24 @@ def _slug(value):
 
 
 def _read_api_key():
-    here = Path(__file__).resolve()
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA")
+        if base:
+            config_dir = Path(base) / "Sapphire"
+        else:
+            config_dir = Path.home() / "AppData" / "Roaming" / "Sapphire"
+    elif sys.platform == "darwin":
+        config_dir = Path.home() / "Library" / "Application Support" / "Sapphire"
+    else:
+        xdg_config = os.environ.get("XDG_CONFIG_HOME")
+        if xdg_config:
+            config_dir = Path(xdg_config) / "sapphire"
+        else:
+            config_dir = Path.home() / ".config" / "sapphire"
 
-    root_candidates = list(here.parents) + [
-        Path("/app"),
-        Path.home(),
-        Path.home() / "sapphire",
-        Path.home() / "Sapphire",
-    ]
+    candidates = [config_dir / "secret_key"]
 
-    seen = set()
-    unique_roots = []
-    for p in root_candidates:
-        s = str(p)
-        if s not in seen:
-            seen.add(s)
-            unique_roots.append(p)
-
-    candidates = []
-    for root in unique_roots:
-        candidates.extend([
-            root / "user" / ".config" / "sapphire" / "secret_key",
-            root / ".config" / "sapphire" / "secret_key",
-            root / "sapphire-config" / "secret_key",
-            root / "user" / "sapphire-config" / "secret_key",
-        ])
-
-    candidates.extend([
-        Path("/home/sapphire/.config/sapphire/secret_key"),
-        Path.home() / ".config" / "sapphire" / "secret_key",
-        Path.home() / "Library" / "Application Support" / "Sapphire" / "secret_key",
-        Path.home() / "sapphire-config" / "secret_key",
-    ])
-
-    seen = set()
-    unique_candidates = []
-    for p in candidates:
-        s = str(p)
-        if s not in seen:
-            seen.add(s)
-            unique_candidates.append(p)
-
-    for path in unique_candidates:
+    for path in candidates:
         if path.exists():
             text = path.read_text(encoding="utf-8").strip()
             if text:
@@ -347,7 +331,7 @@ def _read_api_key():
 
     raise RuntimeError(
         "Could not find Sapphire secret_key. Tried: "
-        + ", ".join(str(p) for p in unique_candidates)
+        + ", ".join(str(p) for p in candidates)
     )
 
 def _api(method, path, payload=None):
@@ -441,12 +425,12 @@ def _deep_merge(a, b):
 
 def _root_paths():
     return {
-        "core_personas": "/app/core/personas/personas.json",
-        "user_personas": "/app/user/personas/personas.json",
-        "core_monoliths": "/app/core/prompt_defaults/prompt_monoliths.json",
-        "user_monoliths": "/app/user/prompts/prompt_monoliths.json",
-        "core_pieces": "/app/core/prompt_defaults/prompt_pieces.json",
-        "user_pieces": "/app/user/prompts/prompt_pieces.json",
+        "core_personas": str(CORE_DIR / "personas" / "personas.json"),
+        "user_personas": str(USER_DIR / "personas" / "personas.json"),
+        "core_monoliths": str(CORE_DIR / "prompt_defaults" / "prompt_monoliths.json"),
+        "user_monoliths": str(USER_DIR / "prompts" / "prompt_monoliths.json"),
+        "core_pieces": str(CORE_DIR / "prompt_defaults" / "prompt_pieces.json"),
+        "user_pieces": str(USER_DIR / "prompts" / "prompt_pieces.json"),
     }
 
 

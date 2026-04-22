@@ -8,10 +8,16 @@ from datetime import datetime, timezone
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = next(
+    (parent for parent in Path(__file__).resolve().parents if (parent / "core").exists() and (parent / "user").exists()),
+    PLUGIN_ROOT
+)
 TOOL_PATH = PLUGIN_ROOT / "tools" / "rendezvous.py"
 DATA_DIR = PLUGIN_ROOT / "data"
 HISTORY_FILE = DATA_DIR / "history.json"
-TRANSCRIPTS_DIR = Path("/app/user/rendezvous_data/transcripts")
+USER_DIR = PROJECT_ROOT / "user"
+CORE_DIR = PROJECT_ROOT / "core"
+TRANSCRIPTS_DIR = USER_DIR / "rendezvous_data" / "transcripts"
 
 _RENDEZVOUS_TOOL = None
 
@@ -51,8 +57,8 @@ def _load_json(path):
 
 
 def _merged_personas():
-    core = _load_json("/app/core/personas/personas.json")
-    user = _load_json("/app/user/personas/personas.json")
+    core = _load_json(CORE_DIR / "personas" / "personas.json")
+    user = _load_json(USER_DIR / "personas" / "personas.json")
 
     if not isinstance(core, dict):
         core = {}
@@ -528,9 +534,9 @@ async def load_history(request=None, body=None, **kwargs):
             seen.add(key)
             candidate_dirs.append(d)
 
-    add_dir("/app/user/rendezvous_data/transcripts")
-    add_dir("/app/user/plugins/rendezvous/data/transcripts")
-    add_dir("/app/user/plugins/rendezvous/data/archives")
+    add_dir(TRANSCRIPTS_DIR)
+    add_dir(PLUGIN_ROOT / "data" / "transcripts")
+    add_dir(PLUGIN_ROOT / "data" / "archives")
     add_dir(getattr(tool, "TRANSCRIPTS_DIR", ""))
     add_dir(getattr(tool, "TRANSCRIPT_DIR", ""))
     add_dir(getattr(tool, "ARCHIVE_DIR", ""))
@@ -637,10 +643,10 @@ async def delete_history(request=None, body=None, **kwargs):
             seen.add(key)
             candidate_dirs.append(d)
 
-    add_dir("/app/user/rendezvous_data/transcripts")
-    add_dir("/app/user/plugins/rendezvous/data/transcripts")
+    add_dir(TRANSCRIPTS_DIR)
+    add_dir(PLUGIN_ROOT / "data" / "transcripts")
 
-    for base in (Path("/app/user/plugins"), Path("/app/user/plugin-saves")):
+    for base in (USER_DIR / "plugins", USER_DIR / "plugin-saves"):
         if base.exists():
             for d in base.glob("rendezvous*/data/transcripts"):
                 add_dir(str(d))
