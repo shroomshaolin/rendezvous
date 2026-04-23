@@ -784,6 +784,66 @@
       }
     }
 
+    let rvActionBusy = false;
+    let rvCooldownUntil = 0;
+    let rvCooldownTimer = null;
+
+    function isRvCoolingDown() {
+      return Date.now() < rvCooldownUntil;
+    }
+
+    function updateRvActionButtons() {
+      const disabled = rvActionBusy || isRvCoolingDown();
+      [
+        "#rv-start",
+        "#rv-continue",
+        "#rv-send",
+        "#rv-end",
+        "#rv-clear",
+        "#rv-archive"
+      ].forEach((sel) => {
+        const btn = root.querySelector(sel);
+        if (btn) btn.disabled = disabled;
+      });
+    }
+
+    function setRvBusy(value) {
+      rvActionBusy = !!value;
+      updateRvActionButtons();
+    }
+
+    function startRvCooldown(ms = 1500) {
+      rvCooldownUntil = Date.now() + ms;
+      if (rvCooldownTimer) {
+        clearTimeout(rvCooldownTimer);
+        rvCooldownTimer = null;
+      }
+      updateRvActionButtons();
+      rvCooldownTimer = setTimeout(() => {
+        rvCooldownTimer = null;
+        updateRvActionButtons();
+      }, ms + 50);
+    }
+
+    function handleRvActionError(err, options = {}) {
+      const msg = String((err && (err.message || err)) || "");
+      const fallbackStatus = options.fallbackStatus || "Error";
+      const writeTranscript = options.writeTranscript !== false;
+
+      console.error(err);
+
+      if (/429|Too Many Requests/i.test(msg)) {
+        startRvCooldown(8000);
+        setStatus("Rate limit hit. Cooling down for a few seconds.");
+        return;
+      }
+
+      setStatus(fallbackStatus);
+      if (writeTranscript) {
+        setTranscript(msg);
+      }
+    }
+
     async function refreshState() {
       const data = await api("session/state");
       const s = data.state || {};
@@ -832,7 +892,14 @@
     window.__rvStopPolling = stopRvPolling;
 
     root.querySelector("#rv-start").addEventListener("click", async () => {
+      if (rvActionBusy || isRvCoolingDown()) {
+        setStatus(isRvCoolingDown() ? "Cooling down..." : "Working...");
+        return;
+      }
+
       try {
+        setRvBusy(true);
+        startRvCooldown(1500);
         state.viewMode = "live";
         state.pendingDividerLabel = "New session";
         setStatus("Starting...");
@@ -850,13 +917,21 @@
         setTranscript(data.transcript || "");
         pollUntilSettled().catch((err) => console.warn("Rendezvous polling start failed:", err));
       } catch (err) {
-        console.error(err); setStatus("Error");
-        setTranscript(String(err));
+        handleRvActionError(err);
+      } finally {
+        setRvBusy(false);
       }
     });
 
     root.querySelector("#rv-continue").addEventListener("click", async () => {
+      if (rvActionBusy || isRvCoolingDown()) {
+        setStatus(isRvCoolingDown() ? "Cooling down..." : "Working...");
+        return;
+      }
+
       try {
+        setRvBusy(true);
+        startRvCooldown(1500);
         state.viewMode = "live";
         state.pendingDividerLabel = "Next batch";
         setStatus("Continuing...");
@@ -864,18 +939,26 @@
         setTranscript(data.transcript || "");
         pollUntilSettled().catch((err) => console.warn("Rendezvous polling start failed:", err));
       } catch (err) {
-        console.error(err); setStatus("Error");
-        setTranscript(String(err));
+        handleRvActionError(err);
+      } finally {
+        setRvBusy(false);
       }
     });
 
     root.querySelector("#rv-send").addEventListener("click", async () => {
+      if (rvActionBusy || isRvCoolingDown()) {
+        setStatus(isRvCoolingDown() ? "Cooling down..." : "Working...");
+        return;
+      }
+
       try {
         const msg = userBox.value.trim();
         if (!msg) {
           setStatus("Type a message first.");
           return;
         }
+        setRvBusy(true);
+        startRvCooldown(1500);
         state.viewMode = "live";
         state.pendingDividerLabel = "Donna steps in";
         setStatus("Sending...");
@@ -887,13 +970,21 @@
         setTranscript(data.transcript || "");
         pollUntilSettled().catch((err) => console.warn("Rendezvous polling start failed:", err));
       } catch (err) {
-        console.error(err); setStatus("Error");
-        setTranscript(String(err));
+        handleRvActionError(err);
+      } finally {
+        setRvBusy(false);
       }
     });
 
     root.querySelector("#rv-end").addEventListener("click", async () => {
+      if (rvActionBusy || isRvCoolingDown()) {
+        setStatus(isRvCoolingDown() ? "Cooling down..." : "Working...");
+        return;
+      }
+
       try {
+        setRvBusy(true);
+        startRvCooldown(1000);
         stopRvPolling();
         setStatus("Ending...");
         await api("session/end", { method: "POST" });
@@ -901,13 +992,21 @@
         await refreshState();
         await loadHistory();
       } catch (err) {
-        console.error(err); setStatus("Error");
-        setTranscript(String(err));
+        handleRvActionError(err);
+      } finally {
+        setRvBusy(false);
       }
     });
 
     root.querySelector("#rv-clear").addEventListener("click", async () => {
+      if (rvActionBusy || isRvCoolingDown()) {
+        setStatus(isRvCoolingDown() ? "Cooling down..." : "Working...");
+        return;
+      }
+
       try {
+        setRvBusy(true);
+        startRvCooldown(1000);
         stopRvPolling();
         setStatus("Clearing...");
         try {
@@ -920,8 +1019,9 @@
         transcript.innerHTML = "";
         setStatus("Cleared");
       } catch (err) {
-        console.error(err); setStatus("Error");
-        setTranscript(String(err));
+        handleRvActionError(err);
+      } finally {
+        setRvBusy(false);
       }
     });
 
@@ -957,7 +1057,14 @@
     });
 
     root.querySelector("#rv-archive").addEventListener("click", async () => {
+      if (rvActionBusy || isRvCoolingDown()) {
+        setStatus(isRvCoolingDown() ? "Cooling down..." : "Working...");
+        return;
+      }
+
       try {
+        setRvBusy(true);
+        startRvCooldown(1000);
         setStatus("Creating archive...");
         const res = await fetch("/api/plugin/rendezvous/history/save", {
           method: "POST",
@@ -974,8 +1081,9 @@
         renderHistoryList();
         setStatus("Archive created.");
       } catch (err) {
-        console.error("Archive create failed:", err);
-        setStatus(`Archive failed: ${err.message || err}`);
+        handleRvActionError(err, { writeTranscript: false });
+      } finally {
+        setRvBusy(false);
       }
     });
 

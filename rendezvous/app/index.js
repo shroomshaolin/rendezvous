@@ -20,6 +20,7 @@
     }
     return data;
   }
+  window.__rvApi = api;
 
   function turnsEachToMessages(value) {
     return Math.max(1, parseInt(value, 10) || 2) * 2;
@@ -317,7 +318,7 @@
       <div style="max-width: 1580px; margin: 0 auto; padding: 24px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px;">
           <div>
-            <h2 style="margin:0;">Rendezvous</h2>
+            <h2 style="margin:0;">🍺 Rendezvous</h2>
             <div style="opacity:.75; margin-top:6px;">A separate stage for two personas to meet, talk, and pause.</div>
           </div>
           <div id="rv-status" style="opacity:.8; font-weight:700;"></div>
@@ -339,7 +340,7 @@
 
             <label style="display:block; margin-bottom:12px;">
               <div style="margin-bottom:6px;">Scene seed</div>
-              <textarea id="rv-scene" rows="4" style="width:100%; padding:10px; border-radius:8px;">meeting for coffee in a quiet diner at dusk</textarea>
+              <textarea id="rv-scene" rows="4" style="width:100%; padding:10px; border-radius:8px;">meeting for beers in a quiet bar at dusk</textarea>
             </label>
 
             <label style="display:block; margin-bottom:12px;">
@@ -362,7 +363,7 @@
                 <button id="rv-copy" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Copy Transcript</button>
                 <button id="rv-toggle-thoughts" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">&#x1F9E0; Inner thoughts: <span id="rv-toggle-thoughts-label">Off</span></button>
                 <button id="rv-export" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Save Session</button>
-                <button id="rv-archive" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Archive Session</button>
+                <button type="button" id="rv-archive" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Create Archive</button>
               </div>
             </div>
 
@@ -551,74 +552,47 @@
     }
 
     function renderHistoryList() {
-      if (!state.history.length) {
-        historyList.innerHTML = `<div style="opacity:.75;">No archived sessions yet.</div>`;
-        return;
-      }
-
-      historyList.innerHTML = state.history.map(item => {
-        const when = item.created_at ? new Date(item.created_at).toLocaleString() : "";
-        const scene = item.scene ? item.scene : "";
-        return `
-          <div style="
-            margin-bottom:10px;
-            padding:10px;
-            border:1px solid rgba(120,120,140,.28);
-            border-radius:10px;
-            background: rgba(255,255,255,.02);
-          ">
-            <div style="font-weight:700; color:#f3e8ff; margin-bottom:4px;">${escapeHtml(item.title || "Archived session")}</div>
-            <div style="font-size:12px; opacity:.8; margin-bottom:4px;">${escapeHtml(when)}</div>
-            <div style="font-size:12px; opacity:.8; margin-bottom:8px;">${escapeHtml(scene)}</div>
-            <div style="display:flex; gap:8px;">
-              <button data-load-id="${escapeHtml(item.id)}" style="padding:7px 10px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Load</button>
-              <button data-delete-id="${escapeHtml(item.id)}" style="padding:7px 10px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Delete</button>
-            </div>
-          </div>
-        `;
-      }).join("");
-
-      historyList.querySelectorAll("[data-load-id]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          try {
-            const id = btn.getAttribute("data-load-id");
-            const data = await api("history/load", {
-              method: "POST",
-              body: JSON.stringify({ id })
-            });
-
-            const entry = data.entry || {};
-            state.viewMode = "archive";
-            state.pendingDividerLabel = "";
-            setTranscript(entry.transcript_text || "");
-            setStatus("Archive loaded");
-
-            if (entry.persona_1) p1.value = entry.persona_1;
-            if (entry.persona_2) p2.value = entry.persona_2;
-            if (entry.scene) root.querySelector("#rv-scene").value = entry.scene;
-          } catch (err) {
-            setStatus("Archive load failed");
-          }
-        });
-      });
-
-      historyList.querySelectorAll("[data-delete-id]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          try {
-            const id = btn.getAttribute("data-delete-id");
-            const data = await api("history/delete", {
-              method: "POST",
-              body: JSON.stringify({ id })
-            });
-            state.history = data.history || [];
-            renderHistoryList();
-            setStatus("Archive deleted");
-          } catch (err) {
-            setStatus("Delete failed");
-          }
-        });
-      });
+    if (!Array.isArray(state.history) || !state.history.length) {
+      historyList.innerHTML = `<div style="opacity:.75;">No archived sessions yet.</div>`;
+      return;
     }
+
+    historyList.innerHTML = state.history.map((item) => {
+      const speakers = Array.isArray(item && item.speakers) ? item.speakers.filter(Boolean) : [];
+      const title = speakers.length ? speakers.join(" × ") : String((item && item.filename) || "Archived session");
+
+      const metaBits = [];
+      if (item && item.created_at) {
+        try {
+          metaBits.push(new Date(item.created_at).toLocaleString());
+        } catch (e) {}
+      }
+      if (item && item.session_id) metaBits.push(String(item.session_id));
+
+      const meta = metaBits.join(" • ");
+      const filename = String((item && item.filename) || "");
+
+      return `
+        <div style="
+          margin-bottom: 10px;
+          padding: 10px 12px;
+          border: 1px solid #3b2b6b;
+          border-radius: 12px;
+          background: rgba(24,18,44,.88);
+        ">
+          <div style="font-weight:700; color:#f3e8ff; margin-bottom:4px;">
+            ${escapeHtml(title)}
+          </div>
+          <div style="font-size:12px; opacity:.82; margin-bottom:6px;">
+            ${escapeHtml(meta)}
+          </div>
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+            ${filename ? `<div style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;"><button data-load-filename="${escapeHtml(filename)}" style="padding:7px 10px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Load</button><button data-delete-filename="${escapeHtml(filename)}" style="padding:7px 10px; border-radius:10px; cursor:pointer; border:1px solid rgba(239,68,68,.35); background:rgba(239,68,68,.12); color:#fecaca; font-weight:700;">Delete 🗑️</button></div>` : ""}
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
 
     async function loadPersonas() {
       const data = await api("personas");
@@ -626,12 +600,248 @@
       fillPersonas(state.personas);
     }
 
+
+    
+
+
+    /* RV_FORCE_DELETE_HANDLER */
+    historyList.onclick = async (e) => {
+      const loadBtn = e.target.closest("[data-load-filename]");
+      if (loadBtn) {
+        const filename = loadBtn.getAttribute("data-load-filename") || "";
+        if (!filename) {
+          setStatus("Load failed: empty filename");
+          return;
+        }
+        try {
+          const data = await api("history/load", {
+            method: "POST",
+            body: JSON.stringify({ filename })
+          });
+          if (!data || data.ok === false) {
+            throw new Error((data && data.error) || "Load failed");
+          }
+          await refreshState();
+          setStatus("Archive loaded.");
+        } catch (err) {
+          console.error("Archive load failed:", err);
+          setStatus(`Load failed: ${err.message || err}`);
+        }
+        return;
+      }
+
+      const btn = e.target.closest("[data-delete-filename]");
+      if (!btn) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const filename = btn.getAttribute("data-delete-filename") || "";
+      if (!filename) return;
+
+      const ok = window.confirm(`Delete archive?\n\n${filename}`);
+      if (!ok) return;
+
+      btn.disabled = true;
+
+      try {
+        const res = await fetch("/api/plugin/rendezvous/history/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename })
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        state.history = Array.isArray(data.transcripts) ? data.transcripts : [];
+        renderHistoryList();
+        setStatus("Archive deleted.");
+      } catch (err) {
+        console.error("Archive delete failed:", err);
+        setStatus(`Delete failed: ${err.message || err}`);
+        btn.disabled = false;
+      }
+    };
+
+
+    
+    /* RV_ARCHIVE_CAPTURE_IN_SCOPE */
+    if (!root.__rvArchiveCaptureBound) {
+      root.__rvArchiveCaptureBound = true;
+
+      const __rvOriginalSetStatus = setStatus;
+      let __rvStatusGuardUntil = 0;
+
+      setStatus = function (msg) {
+        const now = Date.now();
+        const text = String(msg || "");
+
+        if (text === "Idle" && now < __rvStatusGuardUntil) {
+          return;
+        }
+
+        if (
+          text.startsWith("Creating archive") ||
+          text.startsWith("Archive created") ||
+          text.startsWith("Archive failed") ||
+          text.startsWith("Deleting:") ||
+          text.startsWith("Archive deleted") ||
+          text.startsWith("Delete failed")
+        ) {
+          __rvStatusGuardUntil = now + 5000;
+        }
+
+        return __rvOriginalSetStatus(text);
+      };
+
+      async function __rvReloadArchives() {
+        const data = await api("transcripts");
+        state.history = Array.isArray(data.transcripts) ? data.transcripts : [];
+        renderHistoryList();
+        return data;
+      }
+
+      root.addEventListener("click", async (e) => {
+        const archiveBtn = e.target.closest("#rv-archive");
+        if (archiveBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+
+          archiveBtn.disabled = true;
+          try {
+            setStatus("Creating archive...");
+            await api("history/save", {
+              method: "POST",
+              body: JSON.stringify({})
+            });
+            await __rvReloadArchives();
+            setStatus("Archive created.");
+          } catch (err) {
+            console.error("Archive create failed:", err);
+            setStatus(`Archive failed: ${err.message || err}`);
+          } finally {
+            archiveBtn.disabled = false;
+          }
+          return;
+        }
+
+        const delBtn = e.target.closest("[data-delete-filename]");
+        if (delBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+
+          const filename = delBtn.getAttribute("data-delete-filename") || "";
+          if (!filename) {
+            setStatus("Delete failed: empty filename");
+            return;
+          }
+
+          const ok = window.confirm(`Delete archive?\n\n${filename}`);
+          if (!ok) return;
+
+          delBtn.disabled = true;
+          try {
+            setStatus(`Deleting: ${filename}`);
+            const data = await api("history/delete", {
+              method: "POST",
+              body: JSON.stringify({ filename })
+            });
+            state.history = Array.isArray(data.transcripts) ? data.transcripts : [];
+            renderHistoryList();
+            setStatus("Archive deleted.");
+          } catch (err) {
+            console.error("Archive delete failed:", err);
+            setStatus(`Delete failed: ${err.message || err}`);
+          } finally {
+            delBtn.disabled = false;
+          }
+        }
+      }, true);
+    }
+
+
     setStatus("Idle");
 
     async function loadHistory() {
-      const data = await api("history");
-      state.history = data.history || [];
-      renderHistoryList();
+    const data = await api("transcripts");
+    state.history = Array.isArray(data.transcripts) ? data.transcripts : [];
+    renderHistoryList();
+    return data;
+  }
+
+    let rvPollTimer = null;
+    let rvPollBusy = false;
+
+    function stopRvPolling() {
+      if (rvPollTimer) {
+        clearInterval(rvPollTimer);
+        rvPollTimer = null;
+      }
+    }
+
+    let rvActionBusy = false;
+    let rvCooldownUntil = 0;
+    let rvCooldownTimer = null;
+
+    function isRvCoolingDown() {
+      return Date.now() < rvCooldownUntil;
+    }
+
+    function updateRvActionButtons() {
+      const disabled = rvActionBusy || isRvCoolingDown();
+      [
+        "#rv-start",
+        "#rv-continue",
+        "#rv-send",
+        "#rv-end",
+        "#rv-clear",
+        "#rv-archive"
+      ].forEach((sel) => {
+        const btn = root.querySelector(sel);
+        if (btn) btn.disabled = disabled;
+      });
+    }
+
+    function setRvBusy(value) {
+      rvActionBusy = !!value;
+      updateRvActionButtons();
+    }
+
+    function startRvCooldown(ms = 1500) {
+      rvCooldownUntil = Date.now() + ms;
+      if (rvCooldownTimer) {
+        clearTimeout(rvCooldownTimer);
+        rvCooldownTimer = null;
+      }
+      updateRvActionButtons();
+      rvCooldownTimer = setTimeout(() => {
+        rvCooldownTimer = null;
+        updateRvActionButtons();
+      }, ms + 50);
+    }
+
+    function handleRvActionError(err, options = {}) {
+      const msg = String((err && (err.message || err)) || "");
+      const fallbackStatus = options.fallbackStatus || "Error";
+      const writeTranscript = options.writeTranscript !== false;
+
+      console.error(err);
+
+      if (/429|Too Many Requests/i.test(msg)) {
+        startRvCooldown(8000);
+        setStatus("Rate limit hit. Cooling down for a few seconds.");
+        return;
+      }
+
+      setStatus(fallbackStatus);
+      if (writeTranscript) {
+        setTranscript(msg);
+      }
     }
 
     async function refreshState() {
@@ -639,11 +849,57 @@
       const s = data.state || {};
       state.viewMode = "live";
       setTranscript(s.transcript_text || "");
-      setStatus(s.active ? "Paused" : "Idle");
+      const hasTranscript = !!String(s.transcript_text || "").trim();
+      setStatus(s.active ? "Running..." : (hasTranscript ? "Paused" : "Idle"));
+      return s;
     }
 
+    async function pollUntilSettled(timeoutMs = 45000, intervalMs = 2000) {
+      stopRvPolling();
+      const deadline = Date.now() + timeoutMs;
+
+      const tick = async () => {
+        if (rvPollBusy) return;
+        rvPollBusy = true;
+        try {
+          const s = await refreshState();
+          if (!s.active || Date.now() >= deadline) {
+            stopRvPolling();
+            if (!s.active) {
+              await refreshState();
+            }
+          }
+        } catch (err) {
+          const msg = String((err && (err.message || err)) || "");
+          if (/429|Too Many Requests/i.test(msg)) {
+            console.warn("Rendezvous polling backoff:", msg);
+            return;
+          }
+          console.warn("Rendezvous polling failed:", err);
+          if (Date.now() >= deadline) {
+            stopRvPolling();
+          }
+        } finally {
+          rvPollBusy = false;
+        }
+      };
+
+      setTimeout(tick, 1200);
+      rvPollTimer = setInterval(tick, intervalMs);
+    }
+
+    window.__rvRefreshState = refreshState;
+    window.__rvStopPolling = stopRvPolling;
+
     root.querySelector("#rv-start").addEventListener("click", async () => {
+      if (rvActionBusy || isRvCoolingDown()) {
+        setStatus(isRvCoolingDown() ? "Cooling down..." : "Working...");
+        return;
+      }
+
       try {
+        setRvBusy(true);
+        startRvCooldown(1500);
         state.viewMode = "live";
         state.pendingDividerLabel = "New session";
         setStatus("Starting...");
@@ -661,13 +917,21 @@
         setTranscript(data.transcript || "");
         pollUntilSettled().catch((err) => console.warn("Rendezvous polling start failed:", err));
       } catch (err) {
-        console.error(err); setStatus("Error");
-        setTranscript(String(err));
+        handleRvActionError(err);
+      } finally {
+        setRvBusy(false);
       }
     });
 
     root.querySelector("#rv-continue").addEventListener("click", async () => {
+      if (rvActionBusy || isRvCoolingDown()) {
+        setStatus(isRvCoolingDown() ? "Cooling down..." : "Working...");
+        return;
+      }
+
       try {
+        setRvBusy(true);
+        startRvCooldown(1500);
         state.viewMode = "live";
         state.pendingDividerLabel = "Next batch";
         setStatus("Continuing...");
@@ -675,18 +939,26 @@
         setTranscript(data.transcript || "");
         pollUntilSettled().catch((err) => console.warn("Rendezvous polling start failed:", err));
       } catch (err) {
-        console.error(err); setStatus("Error");
-        setTranscript(String(err));
+        handleRvActionError(err);
+      } finally {
+        setRvBusy(false);
       }
     });
 
     root.querySelector("#rv-send").addEventListener("click", async () => {
+      if (rvActionBusy || isRvCoolingDown()) {
+        setStatus(isRvCoolingDown() ? "Cooling down..." : "Working...");
+        return;
+      }
+
       try {
         const msg = userBox.value.trim();
         if (!msg) {
           setStatus("Type a message first.");
           return;
         }
+        setRvBusy(true);
+        startRvCooldown(1500);
         state.viewMode = "live";
         state.pendingDividerLabel = "Donna steps in";
         setStatus("Sending...");
@@ -698,26 +970,43 @@
         setTranscript(data.transcript || "");
         pollUntilSettled().catch((err) => console.warn("Rendezvous polling start failed:", err));
       } catch (err) {
-        console.error(err); setStatus("Error");
-        setTranscript(String(err));
+        handleRvActionError(err);
+      } finally {
+        setRvBusy(false);
       }
     });
 
     root.querySelector("#rv-end").addEventListener("click", async () => {
+      if (rvActionBusy || isRvCoolingDown()) {
+        setStatus(isRvCoolingDown() ? "Cooling down..." : "Working...");
+        return;
+      }
+
       try {
+        setRvBusy(true);
+        startRvCooldown(1000);
         stopRvPolling();
         setStatus("Ending...");
         await api("session/end", { method: "POST" });
         userBox.value = "";
         await refreshState();
+        await loadHistory();
       } catch (err) {
-        console.error(err); setStatus("Error");
-        setTranscript(String(err));
+        handleRvActionError(err);
+      } finally {
+        setRvBusy(false);
       }
     });
 
     root.querySelector("#rv-clear").addEventListener("click", async () => {
+      if (rvActionBusy || isRvCoolingDown()) {
+        setStatus(isRvCoolingDown() ? "Cooling down..." : "Working...");
+        return;
+      }
+
       try {
+        setRvBusy(true);
+        startRvCooldown(1000);
         stopRvPolling();
         setStatus("Clearing...");
         try {
@@ -730,8 +1019,9 @@
         transcript.innerHTML = "";
         setStatus("Cleared");
       } catch (err) {
-        console.error(err); setStatus("Error");
-        setTranscript(String(err));
+        handleRvActionError(err);
+      } finally {
+        setRvBusy(false);
       }
     });
 
@@ -767,23 +1057,38 @@
     });
 
     root.querySelector("#rv-archive").addEventListener("click", async () => {
+      if (rvActionBusy || isRvCoolingDown()) {
+        setStatus(isRvCoolingDown() ? "Cooling down..." : "Working...");
+        return;
+      }
+
       try {
-        if (!state.lastTranscript.trim()) {
-          setStatus("Nothing to archive.");
-          return;
-        }
-        const data = await api("history/save", {
+        setRvBusy(true);
+        startRvCooldown(1000);
+        setStatus("Creating archive...");
+        const res = await fetch("/api/plugin/rendezvous/history/save", {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({})
         });
-        state.history = data.history || [];
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        state.history = Array.isArray(data.transcripts) ? data.transcripts : [];
         renderHistoryList();
-        setStatus("Session archived.");
+        setStatus("Archive created.");
       } catch (err) {
-        setStatus("Archive failed");
+        handleRvActionError(err, { writeTranscript: false });
+      } finally {
+        setRvBusy(false);
       }
     });
 
+    const oldRefreshBtn = root.querySelector("#rv-refresh-history");
+    if (oldRefreshBtn) oldRefreshBtn.style.display = "none";
     root.querySelector("#rv-refresh-history").addEventListener("click", async () => {
       try {
         await loadHistory();
@@ -808,6 +1113,10 @@
       }
     })();
   }
+
+  
+
+window.__rvRefreshState = window.__rvRefreshState || (async () => {});
 
   const ROOT_ID = "rendezvous-app-root";
   let routeWatcher = null;
@@ -871,11 +1180,779 @@
 
   window.addEventListener("hashchange", syncRoute);
   window.addEventListener("popstate", syncRoute);
-  document.addEventListener("click", () => setTimeout(syncRoute, 60), true);
+  document.addEventListener("click", (e) => {
+  if (
+    e.target &&
+    typeof e.target.closest === "function" &&
+    (
+      e.target.closest("#rv-archive-panel-clean") ||
+      e.target.closest(".rv-archive-load-clean") ||
+      e.target.closest(".rv-archive-delete-clean") ||
+      e.target.closest("[data-filename]") ||
+      e.target.closest("#rv-archive") ||
+      e.target.closest("#rv-refresh-history") ||
+      e.target.closest("#rv-archive-create-clean") ||
+      e.target.closest("#rv-archive-refresh-clean")
+    )
+  ) return;
+  setTimeout(syncRoute, 60);
+}, true);
+
+document.addEventListener("click", (e) => {
+  const t = e.target;
+  if (!t || typeof t.closest !== "function") return;
+  if (
+    t.closest("#rv-archive-panel-clean") ||
+    t.closest(".rv-archive-load-clean") ||
+    t.closest(".rv-archive-delete-clean") ||
+    t.closest("[data-filename]") ||
+    t.closest("#rv-archive") ||
+    t.closest("#rv-refresh-history") ||
+    t.closest("#rv-archive-create-clean") ||
+    t.closest("#rv-archive-refresh-clean")
+  ) {
+    e.preventDefault();
+  }
+}, true);
+
+document.addEventListener("submit", (e) => {
+  const t = e.target;
+  if (t && typeof t.closest === "function" && t.closest("#" + ROOT_ID)) {
+    e.preventDefault();
+  }
+}, true);
+
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", boot);
   } else {
     boot();
   }
+
+  })();
+
+
+/* RV_NEW_ARCHIVE_PANEL */
+(function () {
+  function escapeHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  async function rvFetchJson(url, options = {}) {
+    const res = await fetch(url, options);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    return data;
+  }
+
+  function buildPanel() {
+    const oldBtn = document.querySelector("#rv-archive");
+    const oldList = document.querySelector("#rv-history, #rv-history-list");
+    const archiveHeader = Array.from(document.querySelectorAll("h3")).find(el => (el.textContent || "").trim() === "Archive");
+
+    if (!oldBtn || !archiveHeader) return false;
+    if (document.querySelector("#rv-archive-panel-clean")) return true;
+
+    oldBtn.style.display = "none";
+    if (oldList) oldList.style.display = "none";
+
+    const panel = document.createElement("div");
+    panel.id = "rv-archive-panel-clean";
+    panel.style.marginTop = "10px";
+
+    panel.innerHTML = `
+      <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px;">
+        <button type="button" id="rv-archive-create-clean" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Create Archive</button>
+        <button type="button" id="rv-archive-refresh-clean" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Refresh Archive</button>
+        <div id="rv-archive-status-clean" style="font-size:12px; opacity:.85;"></div>
+      </div>
+      <div id="rv-archive-list-clean"></div>
+    `;
+
+    const container = archiveHeader.parentElement ? archiveHeader.parentElement.parentElement : null;
+    if (container) {
+      container.appendChild(panel);
+    } else {
+      archiveHeader.insertAdjacentElement("afterend", panel);
+    }
+
+    return true;
+  }
+
+  function setArchiveStatus(text) {
+    const el = document.querySelector("#rv-archive-status-clean");
+    if (el) el.textContent = text || "";
+  }
+
+  function renderArchives(items) {
+    const list = document.querySelector("#rv-archive-list-clean");
+    if (!list) return;
+
+    if (!Array.isArray(items) || !items.length) {
+      list.innerHTML = `<div style="opacity:.75;">No archived sessions yet.</div>`;
+      return;
+    }
+
+    list.innerHTML = items.map((item) => {
+      const speakers = Array.isArray(item && item.speakers) ? item.speakers.filter(Boolean) : [];
+      const title = speakers.length ? speakers.join(" × ") : String((item && item.filename) || "Archived session");
+
+      const metaBits = [];
+      if (item && item.created_at) {
+        try {
+          metaBits.push(new Date(item.created_at).toLocaleString());
+        } catch (e) {}
+      }
+      if (item && item.session_id) metaBits.push(String(item.session_id));
+
+      const meta = metaBits.join(" • ");
+      const filename = String((item && item.filename) || "");
+
+      return `
+        <div style="
+          margin-bottom:10px;
+          padding:10px 12px;
+          border:1px solid #3b2b6b;
+          border-radius:12px;
+          background:rgba(24,18,44,.88);
+        ">
+          <div style="font-weight:700; color:#f3e8ff; margin-bottom:4px;">${escapeHtml(title)}</div>
+          <div style="font-size:12px; opacity:.82; margin-bottom:6px;">${escapeHtml(meta)}</div>
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+            ${filename ? `<div style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;"><button type="button" class="rv-archive-load-clean" data-filename="${escapeHtml(filename)}" style="padding:7px 10px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Load</button><button type="button" class="rv-archive-delete-clean" data-filename="${escapeHtml(filename)}" style="padding:7px 10px; border-radius:10px; cursor:pointer; border:1px solid rgba(239,68,68,.35); background:rgba(239,68,68,.12); color:#fecaca; font-weight:700;">Delete 🗑️</button></div>` : ""}
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  async function loadArchives() {
+    setArchiveStatus("Loading...");
+    const data = await rvFetchJson("/api/plugin/rendezvous/transcripts");
+    renderArchives(Array.isArray(data.transcripts) ? data.transcripts : []);
+    setArchiveStatus("Ready");
+  }
+
+  async function createArchive() {
+    setArchiveStatus("Creating archive...");
+    await rvFetchJson("/api/plugin/rendezvous/history/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    await loadArchives();
+    setArchiveStatus("Archive created.");
+  }
+
+  async function deleteArchive(filename) {
+    setArchiveStatus(`Deleting: ${filename}`);
+    await rvFetchJson("/api/plugin/rendezvous/history/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename })
+    });
+    await loadArchives();
+    setArchiveStatus("Archive deleted.");
+  }
+
+  async function init() {
+    if (!buildPanel()) return;
+
+    const createBtn = document.querySelector("#rv-archive-create-clean");
+    const refreshBtn = document.querySelector("#rv-archive-refresh-clean");
+    const list = document.querySelector("#rv-archive-list-clean");
+
+    if (createBtn) {
+      createBtn.onclick = async () => {
+        try {
+          createBtn.disabled = true;
+          await createArchive();
+        } catch (err) {
+          console.error(err);
+          setArchiveStatus(`Create failed: ${err.message || err}`);
+        } finally {
+          createBtn.disabled = false;
+        }
+      };
+    }
+
+    if (refreshBtn) {
+      refreshBtn.onclick = async () => {
+        try {
+          refreshBtn.disabled = true;
+          await loadArchives();
+        } catch (err) {
+          console.error(err);
+          setArchiveStatus(`Refresh failed: ${err.message || err}`);
+        } finally {
+          refreshBtn.disabled = false;
+        }
+      };
+    }
+
+    if (list) {
+      list.onclick = async (e) => {
+        const loadBtn = e.target.closest(".rv-archive-load-clean");
+        if (loadBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+const filename = loadBtn.getAttribute("data-filename") || "";
+          if (!filename) {
+            setArchiveStatus("Load failed: empty filename");
+            return;
+          }
+          try {
+            const data = await window.__rvApi("history/load", {
+              method: "POST",
+              body: JSON.stringify({ filename })
+            });
+            if (!data || data.ok === false) {
+              throw new Error((data && data.error) || "Load failed");
+            }
+            const entry = (data && data.entry) || {};
+
+            const syncSelect = (selector, wanted) => {
+              const el = document.querySelector(selector);
+              if (!el || !wanted) return;
+              const target = String(wanted).trim().toLowerCase();
+              const options = Array.from(el.options || []);
+
+              let match = options.find(opt => String(opt.value || "").trim().toLowerCase() === target);
+              if (!match) match = options.find(opt => String(opt.textContent || "").trim().toLowerCase() === target);
+              if (!match) match = options.find(opt => {
+                const txt = String(opt.textContent || "").trim().toLowerCase();
+                return txt.startsWith(target + " —") || txt.startsWith(target + " -") || txt.startsWith(target + " ");
+              });
+
+              if (match) {
+                el.value = match.value;
+                el.dispatchEvent(new Event("change", { bubbles: true }));
+              }
+            };
+
+            const syncField = (selector, value) => {
+              const el = document.querySelector(selector);
+              if (!el || value == null || value === "") return;
+              el.value = String(value);
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+            };
+
+            if (typeof window.__rvRefreshState === "function") {
+              await window.__rvRefreshState();
+            }
+
+            syncSelect("#rv-persona-1", entry.persona_1);
+            syncSelect("#rv-persona-2", entry.persona_2);
+            syncField("#rv-scene", entry.scene);
+
+            const turnsEachEl = document.querySelector("#rv-turns-each");
+            if (turnsEachEl && entry.messages_per_batch) {
+              const turnsEach = String(Math.max(1, Math.round(Number(entry.messages_per_batch) / 2)));
+              if (Array.from(turnsEachEl.options || []).some(opt => String(opt.value) === turnsEach)) {
+                turnsEachEl.value = turnsEach;
+                turnsEachEl.dispatchEvent(new Event("change", { bubbles: true }));
+              }
+            }
+
+            const pair = [entry.persona_1, entry.persona_2].filter(Boolean).join(" × ");
+            setArchiveStatus(pair ? `Archive loaded: ${pair}` : "Archive loaded.");
+          } catch (err) {
+            console.error("Archive load failed:", err);
+            setArchiveStatus(`Load failed: ${err.message || err}`);
+          }
+          return;
+        }
+
+        const btn = e.target.closest(".rv-archive-delete-clean");
+        if (!btn) return;
+
+        const filename = btn.getAttribute("data-filename") || "";
+        if (!filename) return;
+
+        const ok = window.confirm(`Delete archive?\n\n${filename}`);
+        if (!ok) return;
+
+        try {
+          btn.disabled = true;
+          await deleteArchive(filename);
+        } catch (err) {
+          console.error(err);
+          setArchiveStatus(`Delete failed: ${err.message || err}`);
+        } finally {
+          btn.disabled = false;
+        }
+      };
+    }
+
+    try {
+      await loadArchives();
+    } catch (err) {
+      console.error(err);
+      setArchiveStatus(`Initial load failed: ${err.message || err}`);
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    init();
+  }
+})();
+
+/* RV_LAST_USED_PATCH */
+(() => {
+  if (window.__RV_LAST_USED_PATCH__) return;
+  window.__RV_LAST_USED_PATCH__ = true;
+
+  const KEY = "rendezvous:lastUsedSetup";
+
+  function low(v) {
+    return String(v || "").trim().toLowerCase();
+  }
+
+  function onRendezvousPage() {
+    const hash = low(location.hash);
+    if (hash.includes("/apps/rendezvous")) return true;
+    return Array.from(document.querySelectorAll("h1,h2,h3,h4"))
+      .some(el => low(el.textContent).includes("rendezvous"));
+  }
+
+  function findLabel(text) {
+    const want = low(text);
+    const nodes = Array.from(document.querySelectorAll("label, div, span, p, strong, h1, h2, h3, h4"));
+    return nodes.find(el => low(el.textContent) === want);
+  }
+
+  function nextControlAfter(labelText) {
+    const label = findLabel(labelText);
+    if (!label) return null;
+
+    let n = label.nextElementSibling;
+    while (n) {
+      if (n.matches && n.matches("select, textarea, input")) return n;
+      if (n.querySelector) {
+        const found = n.querySelector("select, textarea, input");
+        if (found) return found;
+      }
+      n = n.nextElementSibling;
+    }
+    return null;
+  }
+
+  function controls() {
+    return {
+      p1: nextControlAfter("Persona 1"),
+      p2: nextControlAfter("Persona 2"),
+      scene: nextControlAfter("Scene seed"),
+      tempo: nextControlAfter("Tempo")
+    };
+  }
+
+  function fireChange(el) {
+    if (!el) return;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function setSelectByToken(select, token) {
+    if (!select || !token) return false;
+    const want = low(token);
+
+    for (const opt of Array.from(select.options || [])) {
+      const hay = low((opt.value || "") + " " + (opt.textContent || ""));
+      if (hay.includes(want)) {
+        select.value = opt.value;
+        fireChange(select);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function loadState() {
+    try {
+      return JSON.parse(localStorage.getItem(KEY) || "{}");
+    } catch {
+      return {};
+    }
+  }
+
+  function saveState() {
+    if (!onRendezvousPage()) return;
+
+    const { p1, p2, scene, tempo } = controls();
+    const state = {
+      persona1: p1 ? (p1.value || "") : "",
+      persona2: p2 ? (p2.value || "") : "",
+      scene: scene ? (scene.value || "") : "",
+      tempo: tempo ? (tempo.value || "") : ""
+    };
+
+    localStorage.setItem(KEY, JSON.stringify(state));
+  }
+
+  function applyState(state) {
+    if (!state || !onRendezvousPage()) return;
+
+    const { p1, p2, scene, tempo } = controls();
+
+    if (p1 && state.persona1) {
+      if (!setSelectByToken(p1, state.persona1)) {
+        p1.value = state.persona1;
+        fireChange(p1);
+      }
+    }
+
+    if (p2 && state.persona2) {
+      if (!setSelectByToken(p2, state.persona2)) {
+        p2.value = state.persona2;
+        fireChange(p2);
+      }
+    }
+
+    if (scene && state.scene && !String(scene.value || "").trim()) {
+      scene.value = state.scene;
+      fireChange(scene);
+    }
+
+    if (tempo && state.tempo) {
+      if (!setSelectByToken(tempo, state.tempo)) {
+        tempo.value = state.tempo;
+        fireChange(tempo);
+      }
+    }
+  }
+
+  function shouldRestore(state) {
+    const { p1, p2, scene } = controls();
+    if (!p1 || !p2) return false;
+
+    const p1LooksDefault = low(p1.value).includes("dawn");
+    const p2LooksDefault = low(p2.value).includes("fox");
+    const sceneEmpty = scene ? !String(scene.value || "").trim() : true;
+
+    return !!(
+      state &&
+      (state.persona1 || state.persona2 || state.scene || state.tempo) &&
+      (p1LooksDefault || p2LooksDefault || sceneEmpty)
+    );
+  }
+
+  function bindControls() {
+    const { p1, p2, scene, tempo } = controls();
+    [p1, p2, scene, tempo].forEach(el => {
+      if (!el || el.dataset.rvLastUsedBound === "1") return;
+      el.addEventListener("change", saveState);
+      el.addEventListener("input", saveState);
+      el.dataset.rvLastUsedBound = "1";
+    });
+  }
+
+  function restoreIfNeeded() {
+    if (!onRendezvousPage()) return;
+    bindControls();
+
+    const state = loadState();
+    if (shouldRestore(state)) {
+      applyState(state);
+    }
+  }
+
+  function rememberArchivePairFromLoadButton(btn) {
+    const card = btn.closest("div");
+    if (!card) return;
+
+    const pairNode = Array.from(card.querySelectorAll("*")).find(el => {
+      const t = String(el.textContent || "").trim();
+      return /^[^\n]+\s+x\s+[^\n]+$/i.test(t);
+    });
+
+    if (!pairNode) return;
+
+    const m = String(pairNode.textContent || "").trim().match(/^(.+?)\s+x\s+(.+)$/i);
+    if (!m) return;
+
+    const state = loadState();
+    state.persona1 = m[1].trim();
+    state.persona2 = m[2].trim();
+    localStorage.setItem(KEY, JSON.stringify(state));
+
+    setTimeout(() => applyState(state), 50);
+    setTimeout(() => applyState(state), 300);
+    setTimeout(saveState, 500);
+  }
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest("button") : null;
+    if (!btn || !onRendezvousPage()) return;
+
+    const t = low(btn.textContent);
+
+    if (t === "load") {
+      rememberArchivePairFromLoadButton(btn);
+    }
+
+    if (
+      t.includes("start rendezvous") ||
+      t.includes("continue") ||
+      t.includes("clear session") ||
+      t.includes("save session") ||
+      t.includes("create archive")
+    ) {
+      setTimeout(saveState, 50);
+      setTimeout(saveState, 300);
+    }
+  });
+
+  window.addEventListener("hashchange", () => {
+    setTimeout(restoreIfNeeded, 50);
+    setTimeout(restoreIfNeeded, 300);
+  });
+
+  document.addEventListener("DOMContentLoaded", () => {
+    setTimeout(restoreIfNeeded, 50);
+    setTimeout(restoreIfNeeded, 300);
+  });
+
+  setInterval(() => {
+    if (!onRendezvousPage()) return;
+    bindControls();
+    restoreIfNeeded();
+  }, 800);
+})();
+
+/* RV_LOAD_SYNC_PATCH */
+(() => {
+  if (window.__RV_LOAD_SYNC_PATCH__) return;
+  window.__RV_LOAD_SYNC_PATCH__ = true;
+
+  const KEY = "rendezvous:lastUsedSetup";
+
+  function low(v) {
+    return String(v || "").trim().toLowerCase();
+  }
+
+  function findLabel(text) {
+    const want = low(text);
+    const nodes = Array.from(document.querySelectorAll("label, div, span, p, strong, h1, h2, h3, h4"));
+    return nodes.find(el => low(el.textContent) === want);
+  }
+
+  function nextControlAfter(labelText) {
+    const label = findLabel(labelText);
+    if (!label) return null;
+
+    let n = label.nextElementSibling;
+    while (n) {
+      if (n.matches && n.matches("select, textarea, input")) return n;
+      if (n.querySelector) {
+        const found = n.querySelector("select, textarea, input");
+        if (found) return found;
+      }
+      n = n.nextElementSibling;
+    }
+    return null;
+  }
+
+  function controls() {
+    return {
+      p1: nextControlAfter("Persona 1"),
+      p2: nextControlAfter("Persona 2"),
+      scene: nextControlAfter("Scene seed"),
+      tempo: nextControlAfter("Tempo")
+    };
+  }
+
+  function fireChange(el) {
+    if (!el) return;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function setSelectByToken(select, token) {
+    if (!select || !token) return false;
+    const want = low(token);
+
+    for (const opt of Array.from(select.options || [])) {
+      const hay = low((opt.value || "") + " " + (opt.textContent || ""));
+      if (hay.includes(want)) {
+        select.value = opt.value;
+        fireChange(select);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function loadStored() {
+    try {
+      return JSON.parse(localStorage.getItem(KEY) || "{}");
+    } catch {
+      return {};
+    }
+  }
+
+  function saveStored(state) {
+    const merged = { ...loadStored(), ...state };
+    localStorage.setItem(KEY, JSON.stringify(merged));
+    return merged;
+  }
+
+  function applyState(state) {
+    if (!state) return;
+
+    const tries = [0, 50, 150, 300, 700, 1200, 2000];
+
+    for (const ms of tries) {
+      setTimeout(() => {
+        const { p1, p2, scene, tempo } = controls();
+
+        if (p1 && state.persona1) {
+          if (!setSelectByToken(p1, state.persona1)) {
+            p1.value = state.persona1;
+            fireChange(p1);
+          }
+        }
+
+        if (p2 && state.persona2) {
+          if (!setSelectByToken(p2, state.persona2)) {
+            p2.value = state.persona2;
+            fireChange(p2);
+          }
+        }
+
+        if (scene && state.scene) {
+          scene.value = state.scene;
+          fireChange(scene);
+        }
+
+        if (tempo && state.tempo !== undefined && state.tempo !== null && String(state.tempo) !== "") {
+          if (!setSelectByToken(tempo, String(state.tempo))) {
+            tempo.value = String(state.tempo);
+            fireChange(tempo);
+          }
+        }
+      }, ms);
+    }
+  }
+
+  function extractState(payload, depth = 0) {
+    if (!payload || typeof payload !== "object" || depth > 5) return null;
+
+    const p1 = payload.persona_1 ?? payload.persona1 ?? payload.personaOne;
+    const p2 = payload.persona_2 ?? payload.persona2 ?? payload.personaTwo;
+    const scene = payload.scene ?? payload.scene_seed ?? payload.seed ?? "";
+    const rawTempo = payload.messages_per_batch ?? payload.tempo ?? payload.batch_size ?? "";
+
+    let tempo = "";
+    if (rawTempo !== "") {
+      const n = Number(rawTempo);
+      tempo = Number.isFinite(n) && n > 0
+        ? String(Math.max(1, Math.round(n / 2)))
+        : String(rawTempo);
+    }
+
+    if (p1 || p2 || scene || tempo) {
+      return {
+        persona1: p1 ? String(p1) : "",
+        persona2: p2 ? String(p2) : "",
+        scene: scene ? String(scene) : "",
+        tempo
+      };
+    }
+
+    if (Array.isArray(payload)) {
+      for (const item of payload) {
+        const found = extractState(item, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    for (const key of Object.keys(payload)) {
+      const found = extractState(payload[key], depth + 1);
+      if (found) return found;
+    }
+
+    return null;
+  }
+
+  function rememberFromPayload(payload) {
+    const found = extractState(payload);
+    if (!found) return;
+
+    const merged = saveStored(found);
+    applyState(merged);
+  }
+
+  function rememberFromCard(btn) {
+    const card = btn.closest("div");
+    if (!card) return;
+
+    const text = String(card.textContent || "");
+    const pair = text.match(/([A-Za-z0-9 _-]+)\s+x\s+([A-Za-z0-9 _-]+)/i);
+    if (!pair) return;
+
+    const merged = saveStored({
+      persona1: pair[1].trim(),
+      persona2: pair[2].trim()
+    });
+
+    applyState(merged);
+  }
+
+  const origFetch = window.fetch;
+  if (typeof origFetch === "function") {
+    window.fetch = async function(...args) {
+      const res = await origFetch.apply(this, args);
+      try {
+        const url = String((args[0] && args[0].url) || args[0] || "");
+        if (/history\/load|\/load\b|latest|open|pick/i.test(url)) {
+          const clone = res.clone();
+          clone.json().then(rememberFromPayload).catch(() => {});
+        }
+      } catch {}
+      return res;
+    };
+  }
+
+  const xhrOpen = XMLHttpRequest.prototype.open;
+  const xhrSend = XMLHttpRequest.prototype.send;
+
+  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+    this.__rv_url = url;
+    return xhrOpen.call(this, method, url, ...rest);
+  };
+
+  XMLHttpRequest.prototype.send = function(...args) {
+    this.addEventListener("load", () => {
+      try {
+        const url = String(this.__rv_url || "");
+        if (/history\/load|\/load\b|latest|open|pick/i.test(url)) {
+          try {
+            rememberFromPayload(JSON.parse(this.responseText));
+          } catch {}
+        }
+      } catch {}
+    });
+    return xhrSend.apply(this, args);
+  };
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest("button") : null;
+    if (!btn) return;
+
+    const t = low(btn.textContent);
+    if (t === "load") {
+      rememberFromCard(btn);
+    }
+  });
 })();
