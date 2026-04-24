@@ -483,6 +483,50 @@
     return body;
   }
 
+  function rvClearSpeakingTurnHighlight() {
+    document.querySelectorAll('[data-rv-speaking-turn="true"]').forEach((node) => {
+      node.removeAttribute("data-rv-speaking-turn");
+      node.style.outline = "";
+      node.style.boxShadow = "";
+      node.style.backgroundColor = "";
+    });
+  }
+
+  function rvFindTranscriptNodeForSpeech(text) {
+    const transcriptEl = document.getElementById("rv-transcript");
+    if (!transcriptEl) return null;
+
+    const target = rvCleanText(text).slice(0, 180);
+    if (!target) return null;
+
+    const nodes = Array.from(transcriptEl.querySelectorAll("div"));
+    return nodes.find((node) => {
+      const hay = rvCleanText(node.textContent || "");
+      return hay.includes(target);
+    }) || null;
+  }
+
+  function rvScrollSpeechIntoView(text) {
+    const node = rvFindTranscriptNodeForSpeech(text);
+    if (!node) return;
+
+    rvClearSpeakingTurnHighlight();
+
+    node.setAttribute("data-rv-speaking-turn", "true");
+    node.style.outline = "2px solid rgba(196, 181, 253, 0.75)";
+    node.style.boxShadow = "0 0 18px rgba(124, 58, 237, 0.28)";
+    node.style.backgroundColor = "rgba(76, 29, 149, 0.16)";
+
+    try {
+      node.scrollIntoView({
+        behavior: "smooth",
+        block: "center"
+      });
+    } catch (err) {
+      node.scrollIntoView();
+    }
+  }
+
   async function rvSpeakEntriesSequentially(entries) {
     const readable = entries
       .filter(entry => entry && !isInnerThoughtPart(entry))
@@ -501,10 +545,13 @@
       const speaker = rvCleanText(item.entry.speaker || item.entry.name || "Turn");
       const voice = rvVoiceForEntry(item.entry);
 
+      rvScrollSpeechIntoView(item.text);
       await rvSpeakText(item.text, speaker ? `Reading ${speaker}` : "Reading turn", voice);
 
       if (window.__rvTtsQueueToken !== token) return;
     }
+
+    rvClearSpeakingTurnHighlight();
   }
 
   function rvMaybeAutoSpeakTranscript(currentRaw) {
@@ -1160,11 +1207,24 @@
     }
 
     function setTranscript(text) {
+      const previousScrollTop = transcript.scrollTop || 0;
+      const previousScrollHeight = transcript.scrollHeight || 0;
+      const previousClientHeight = transcript.clientHeight || 0;
+      const wasNearBottom = previousScrollHeight - previousScrollTop - previousClientHeight < 80;
+
       transcript.innerHTML = renderTranscriptHtml(text || "");
       polishTranscriptDom();
+
       requestAnimationFrame(() => {
-        transcript.scrollTop = transcript.scrollHeight;
+        if (wasNearBottom) {
+          transcript.scrollTop = transcript.scrollHeight;
+        } else {
+          const newScrollHeight = transcript.scrollHeight || 0;
+          const heightDelta = newScrollHeight - previousScrollHeight;
+          transcript.scrollTop = Math.max(0, previousScrollTop + Math.max(0, heightDelta));
+        }
       });
+
       state.lastTranscript = String(text || "");
       rvMaybeAutoSpeakTranscript(text);
       state.pendingDividerLabel = "";
