@@ -527,8 +527,14 @@
     }
 
     if (!previous.trim()) {
-      window.__rvTtsLastAutoRaw = current;
-      return;
+      const parsed = splitTranscript(current) || {};
+      const entries = filterTranscriptParts(parsed.entries || [])
+        .filter(entry => entry && !isInnerThoughtPart(entry));
+
+      if (!state.sessionActive || !entries.length) {
+        window.__rvTtsLastAutoRaw = current;
+        return;
+      }
     }
 
     window.__rvTtsPendingRaw = current;
@@ -1535,6 +1541,8 @@
         setRvBusy(true);
         startRvCooldown(1500);
         state.viewMode = "live";
+        state.sessionActive = true;
+        window.__rvTtsLastAutoRaw = "";
         state.pendingDividerLabel = "New session";
         setStatus("Starting...");
         const turnsEach = root.querySelector("#rv-turns-each").value;
@@ -1567,6 +1575,8 @@
         setRvBusy(true);
         startRvCooldown(1500);
         state.viewMode = "live";
+        state.sessionActive = true;
+        window.__rvTtsLastAutoRaw = state.lastTranscript || window.__rvTtsLastAutoRaw || "";
         state.pendingDividerLabel = "Next batch";
         setStatus("Continuing...");
         const data = await api("session/continue", { method: "POST" });
@@ -1594,6 +1604,8 @@
         setRvBusy(true);
         startRvCooldown(1500);
         state.viewMode = "live";
+        state.sessionActive = true;
+        window.__rvTtsLastAutoRaw = state.lastTranscript || window.__rvTtsLastAutoRaw || "";
         state.pendingDividerLabel = "Donna steps in";
         setStatus("Sending...");
         const data = await api("session/user_message", {
