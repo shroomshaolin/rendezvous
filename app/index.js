@@ -5,7 +5,8 @@
     lastTranscript: "",
     pendingDividerLabel: "",
     showInnerThoughts: localStorage.getItem("rvShowInnerThoughts") === "true",
-    viewMode: "live"
+    viewMode: "live",
+    sessionActive: false
   };
 
   async function api(path, options = {}) {
@@ -21,6 +22,596 @@
     return data;
   }
   window.__rvApi = api;
+
+  /* ===== Rendezvous Sapphire/Kokoro TTS ===== */
+  const RV_TTS_VOICE_KEYS = {
+    one: "rendezvous.tts.voice1.v1",
+    two: "rendezvous.tts.voice2.v1",
+    user: "rendezvous.tts.userVoice.v1"
+  };
+  const RV_TTS_SPEED_KEY = "rendezvous.tts.sapphireSpeed.v1";
+  const RV_TTS_AUTO_KEY = "rendezvous.tts.autoVoice.v1";
+
+  function rvCleanText(value) {
+    return String(value || "")
+      .replace(/\s+/g, " ")
+      .replace(/⊕/g, "")
+      .trim();
+  }
+
+  function rvNormText(value) {
+    return rvCleanText(value).toLowerCase();
+  }
+
+  function rvCsrfHeaders() {
+    const token =
+      document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") ||
+      window.csrfToken ||
+      window.CSRF_TOKEN ||
+      "";
+
+    return token ? { "X-CSRF-Token": token } : {};
+  }
+
+  function rvStoredVoice(slot = "one") {
+    try {
+      return localStorage.getItem(RV_TTS_VOICE_KEYS[slot] || RV_TTS_VOICE_KEYS.one) || "";
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function rvSetStoredVoice(slot = "one", value = "") {
+    try {
+      localStorage.setItem(RV_TTS_VOICE_KEYS[slot] || RV_TTS_VOICE_KEYS.one, value || "");
+    } catch (err) {}
+  }
+
+  function rvStoredSpeed() {
+    try {
+      const raw = localStorage.getItem(RV_TTS_SPEED_KEY);
+      const value = raw ? Number(raw) : 1.0;
+      return Number.isFinite(value) ? value : 1.0;
+    } catch (err) {
+      return 1.0;
+    }
+  }
+
+  function rvSetStoredSpeed(value) {
+    try {
+      localStorage.setItem(RV_TTS_SPEED_KEY, String(value));
+    } catch (err) {}
+  }
+
+  function rvAutoVoiceEnabled() {
+    try {
+      return localStorage.getItem(RV_TTS_AUTO_KEY) === "true";
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function rvSetAutoVoice(value) {
+    try {
+      localStorage.setItem(RV_TTS_AUTO_KEY, value ? "true" : "false");
+    } catch (err) {}
+  }
+
+  function rvSplitText(text) {
+    const clean = rvCleanText(text);
+    if (!clean) return [];
+
+    const chunks = [];
+    let rest = clean;
+
+    while (rest.length > 0) {
+      if (rest.length <= 360) {
+        chunks.push(rest);
+        break;
+      }
+
+      let cut = rest.lastIndexOf(". ", 360);
+      if (cut < 120) cut = rest.lastIndexOf("; ", 360);
+      if (cut < 120) cut = rest.lastIndexOf(", ", 360);
+      if (cut < 120) cut = 360;
+
+      chunks.push(rest.slice(0, cut + 1).trim());
+      rest = rest.slice(cut + 1).trim();
+    }
+
+    return chunks.filter(Boolean);
+  }
+
+  function rvTtsStatus(text) {
+    const status = document.getElementById("rv-tts-status");
+    if (status) status.textContent = text;
+  }
+
+  function rvUpdateAutoButton(root = document) {
+    const btn = root.querySelector("#rv-tts-auto");
+    if (!btn) return;
+    btn.textContent = rvAutoVoiceEnabled() ? "🟢 Auto Voice: On" : "⚪ Auto Voice: Off";
+  }
+
+  function rvStopLocalAudio() {
+    const audio = window.__rvTtsAudio;
+    if (audio) {
+      try {
+        audio.pause();
+        audio.src = "";
+      } catch (err) {}
+    }
+
+    if (window.__rvTtsObjectUrl) {
+      try {
+        URL.revokeObjectURL(window.__rvTtsObjectUrl);
+      } catch (err) {}
+      window.__rvTtsObjectUrl = "";
+    }
+  }
+
+  async function rvStopSpeaking(options = {}) {
+    if (!options.keepQueue) {
+      window.__rvTtsQueueToken = (window.__rvTtsQueueToken || 0) + 1;
+    }
+
+    window.__rvTtsSpeaking = false;
+
+    if (window.__rvTtsAbortController) {
+      try {
+        window.__rvTtsAbortController.abort();
+      } catch (err) {}
+      window.__rvTtsAbortController = null;
+    }
+
+    rvStopLocalAudio();
+
+    try {
+      window.speechSynthesis.cancel();
+    } catch (err) {}
+
+    try {
+      await fetch("/api/tts/stop", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: rvCsrfHeaders()
+      });
+    } catch (err) {}
+
+    rvTtsStatus("Stopped.");
+  }
+
+  window.__rvTtsStopSpeaking = rvStopSpeaking;
+
+  function rvVoiceOptionsHtml(voices, saved, fallbackVoice = "") {
+    const want = saved || fallbackVoice || "";
+    const body = voices.length
+      ? voices.map((voice) => {
+          const id = voice.voice_id || voice.id || voice.name || "";
+          const label = `${voice.name || id}${voice.category ? " — " + voice.category : ""}`;
+          const selected = id === want ? " selected" : "";
+          return `<option value="${escapeHtml(id)}"${selected}>${escapeHtml(label)}</option>`;
+        }).join("")
+      : `<option value="">Default Sapphire voice</option>`;
+
+    return `<option value="">Default Sapphire voice</option>${body}`;
+  }
+
+  async function rvLoadSapphireVoices(root) {
+    const selects = Array.from(root.querySelectorAll(".rv-tts-voice-select"));
+    const rate = root.querySelector("#rv-tts-rate");
+    if (!selects.length) return;
+
+    try {
+      const res = await fetch("/api/tts/voices", {
+        method: "GET",
+        credentials: "same-origin"
+      });
+
+      if (!res.ok) throw new Error(`voices ${res.status}`);
+
+      const data = await res.json();
+      const voices = Array.isArray(data.voices) ? data.voices : [];
+      const defaultVoice = data.default_voice || (voices[0] && (voices[0].voice_id || voices[0].id || voices[0].name)) || "";
+      const secondVoice = voices[1] ? (voices[1].voice_id || voices[1].id || voices[1].name || "") : "";
+
+      selects.forEach((select) => {
+        const slot = select.getAttribute("data-rv-tts-slot") || "one";
+        const saved = rvStoredVoice(slot);
+        const fallback = slot === "two" ? (secondVoice || defaultVoice) : defaultVoice;
+        select.innerHTML = rvVoiceOptionsHtml(voices, saved, fallback);
+
+        if (saved || fallback) {
+          select.value = saved || fallback;
+          rvSetStoredVoice(slot, select.value || "");
+        }
+      });
+
+      if (rate && data.speed_min != null && data.speed_max != null) {
+        rate.min = String(data.speed_min);
+        rate.max = String(data.speed_max);
+      }
+
+      rvTtsStatus(`Sapphire TTS ready${data.provider ? " · " + data.provider : ""}.`);
+    } catch (err) {
+      selects.forEach((select) => {
+        select.innerHTML = `<option value="">Browser fallback</option>`;
+      });
+      rvTtsStatus("Sapphire voices unavailable; browser fallback ready.");
+    }
+  }
+
+  async function rvPlayAudioBlob(blob) {
+    rvStopLocalAudio();
+
+    const url = URL.createObjectURL(blob);
+    window.__rvTtsObjectUrl = url;
+
+    const audio = new Audio(url);
+    window.__rvTtsAudio = audio;
+
+    await new Promise((resolve, reject) => {
+      audio.onended = resolve;
+      audio.onerror = () => reject(new Error("Audio playback failed."));
+      audio.oncanplaythrough = () => {
+        rvTtsStatus("Sapphire audio ready; playing…");
+      };
+      audio.play().catch((err) => {
+        reject(new Error(`Browser refused Sapphire audio playback: ${err && err.message ? err.message : err}`));
+      });
+    });
+  }
+
+  async function rvSpeakWithSapphire(text, label = "Reading", voiceOverride = "") {
+    const chunks = rvSplitText(text);
+    if (!chunks.length) {
+      rvTtsStatus("Nothing to read yet.");
+      return;
+    }
+
+    await rvStopSpeaking({ keepQueue: true });
+    window.__rvTtsSpeaking = true;
+
+    const voice = voiceOverride || rvStoredVoice("one");
+    const speed = rvStoredSpeed();
+
+    for (let i = 0; i < chunks.length; i += 1) {
+      if (!window.__rvTtsSpeaking) return;
+
+      rvTtsStatus(`${label} with Sapphire voice… ${i + 1}/${chunks.length}`);
+
+      const controller = new AbortController();
+      window.__rvTtsAbortController = controller;
+
+      const res = await fetch("/api/tts/preview", {
+        method: "POST",
+        credentials: "same-origin",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...rvCsrfHeaders()
+        },
+        body: JSON.stringify({
+          text: chunks[i],
+          voice: voice || undefined,
+          speed: speed,
+          pitch: 1.0
+        })
+      });
+
+      if (!res.ok) {
+        let msg = `Sapphire TTS failed (${res.status})`;
+        try {
+          const data = await res.json();
+          msg = data.detail || data.error || msg;
+        } catch (err) {}
+        throw new Error(msg);
+      }
+
+      const blob = await res.blob();
+
+      if (!blob || blob.size < 128) {
+        throw new Error(`Sapphire TTS returned empty audio (${blob ? blob.size : 0} bytes).`);
+      }
+
+      rvTtsStatus(`Playing Sapphire audio… ${Math.round(blob.size / 1024)} KB`);
+      await rvPlayAudioBlob(blob);
+    }
+
+    window.__rvTtsSpeaking = false;
+    rvTtsStatus("Finished reading.");
+  }
+
+  function rvSpeakWithBrowserFallback(text, label = "Reading") {
+    return new Promise((resolve) => {
+      if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
+        rvTtsStatus("Read aloud is not supported in this browser.");
+        resolve();
+        return;
+      }
+
+      const chunks = rvSplitText(text);
+      if (!chunks.length) {
+        rvTtsStatus("Nothing to read yet.");
+        resolve();
+        return;
+      }
+
+      try {
+        window.speechSynthesis.cancel();
+      } catch (err) {}
+
+      window.__rvTtsSpeaking = true;
+      rvTtsStatus(`${label} with browser fallback…`);
+
+      let index = 0;
+
+      const speakNext = () => {
+        if (!window.__rvTtsSpeaking) {
+          resolve();
+          return;
+        }
+
+        if (index >= chunks.length) {
+          window.__rvTtsSpeaking = false;
+          rvTtsStatus("Finished reading.");
+          resolve();
+          return;
+        }
+
+        const utterance = new SpeechSynthesisUtterance(chunks[index]);
+        utterance.rate = Math.max(0.65, Math.min(1.35, rvStoredSpeed()));
+        utterance.pitch = 1.0;
+        utterance.volume = 1.0;
+
+        utterance.onend = () => {
+          index += 1;
+          speakNext();
+        };
+
+        utterance.onerror = () => {
+          window.__rvTtsSpeaking = false;
+          rvTtsStatus("Read aloud stopped.");
+          resolve();
+        };
+
+        window.speechSynthesis.speak(utterance);
+      };
+
+      speakNext();
+    });
+  }
+
+  async function rvSpeakText(text, label = "Reading", voiceOverride = "") {
+    try {
+      await rvSpeakWithSapphire(text, label, voiceOverride);
+    } catch (err) {
+      if (!window.__rvTtsSpeaking) {
+        rvTtsStatus("Stopped.");
+        return;
+      }
+
+      console.warn("Rendezvous Sapphire TTS failed; falling back to browser TTS.", err);
+      rvTtsStatus("Sapphire TTS failed; using browser voice.");
+      await rvSpeakWithBrowserFallback(text, label);
+    }
+  }
+
+  function rvPersonaTokens(selector) {
+    const select = document.querySelector(selector);
+    if (!select) return [];
+
+    const out = [];
+    out.push(select.value || "");
+
+    const option = select.options && select.selectedIndex >= 0
+      ? select.options[select.selectedIndex]
+      : null;
+
+    if (option) out.push(option.textContent || "");
+
+    return out.map(rvNormText).filter(Boolean);
+  }
+
+  function rvUserSpeakerName(speaker) {
+    const key = rvNormText(speaker);
+    return key === "donna" || key === "user" || key === "you" || key === "mystic";
+  }
+
+  function rvSpeakerOrderFromTranscript() {
+    const parsed = splitTranscript(state.lastTranscript || "") || {};
+    const entries = filterTranscriptParts(parsed.entries || []);
+    const order = [];
+
+    entries.forEach((entry) => {
+      if (!entry || isInnerThoughtPart(entry)) return;
+
+      const speaker = rvNormText(entry.speaker || entry.name || "");
+      if (!speaker || rvUserSpeakerName(speaker) || speaker === "scene") return;
+
+      if (!order.includes(speaker)) order.push(speaker);
+    });
+
+    return order;
+  }
+
+  function rvSlotForSpeaker(speaker) {
+    const key = rvNormText(speaker);
+
+    if (rvUserSpeakerName(key)) return "user";
+
+    const oneTokens = rvPersonaTokens("#rv-persona-1");
+    const twoTokens = rvPersonaTokens("#rv-persona-2");
+
+    if (oneTokens.some(token => token && (key === token || token.includes(key) || key.includes(token)))) {
+      return "one";
+    }
+
+    if (twoTokens.some(token => token && (key === token || token.includes(key) || key.includes(token)))) {
+      return "two";
+    }
+
+    const order = rvSpeakerOrderFromTranscript();
+
+    if (order[0] && key === order[0]) return "one";
+    if (order[1] && key === order[1]) return "two";
+
+    return order.length % 2 === 0 ? "one" : "two";
+  }
+
+  function rvVoiceForEntry(entry) {
+    const slot = rvSlotForSpeaker(entry && (entry.speaker || entry.name || ""));
+    return rvStoredVoice(slot);
+  }
+
+  function rvEntryReadText(entry) {
+    if (!entry || isInnerThoughtPart(entry)) return "";
+
+    const body = rvCleanText(entry.body || entry.text || entry.content || "");
+    if (!body) return "";
+
+    const speaker = rvCleanText(entry.speaker || entry.name || "");
+    return speaker ? `${speaker}: ${body}` : body;
+  }
+
+  async function rvSpeakEntriesSequentially(entries) {
+    const readable = entries
+      .filter(entry => entry && !isInnerThoughtPart(entry))
+      .map(entry => ({ entry, text: rvEntryReadText(entry) }))
+      .filter(item => item.text);
+
+    if (!readable.length) return;
+
+    const token = (window.__rvTtsQueueToken || 0) + 1;
+    window.__rvTtsQueueToken = token;
+
+    for (const item of readable) {
+      if (window.__rvTtsQueueToken !== token) return;
+      if (!rvAutoVoiceEnabled()) return;
+
+      const speaker = rvCleanText(item.entry.speaker || item.entry.name || "Turn");
+      const voice = rvVoiceForEntry(item.entry);
+
+      await rvSpeakText(item.text, speaker ? `Reading ${speaker}` : "Reading turn", voice);
+
+      if (window.__rvTtsQueueToken !== token) return;
+    }
+  }
+
+  function rvMaybeAutoSpeakTranscript(currentRaw) {
+    const current = String(currentRaw || "");
+    const previous = String(window.__rvTtsLastAutoRaw || "");
+
+
+    if (!rvAutoVoiceEnabled()) return;
+
+    if (
+      window.__rvTtsAutoTimer &&
+      String(window.__rvTtsPendingRaw || "") === current
+    ) {
+      return;
+    }
+
+    if (window.__rvTtsAutoTimer) {
+      clearTimeout(window.__rvTtsAutoTimer);
+      window.__rvTtsAutoTimer = null;
+    }
+
+    if (!previous.trim()) {
+      window.__rvTtsLastAutoRaw = current;
+      return;
+    }
+
+    window.__rvTtsPendingRaw = current;
+
+    window.__rvTtsAutoTimer = setTimeout(() => {
+      const stableCurrent = String(window.__rvTtsPendingRaw || "");
+      const stablePrevious = String(window.__rvTtsLastAutoRaw || "");
+
+      if (!rvAutoVoiceEnabled()) return;
+      if (!stableCurrent.trim() || stableCurrent === stablePrevious) return;
+
+      const previousParsed = splitTranscript(stablePrevious) || {};
+      const currentParsed = splitTranscript(stableCurrent) || {};
+
+      const previousEntries = filterTranscriptParts(previousParsed.entries || [])
+        .filter(entry => entry && !isInnerThoughtPart(entry));
+
+      const currentEntries = filterTranscriptParts(currentParsed.entries || [])
+        .filter(entry => entry && !isInnerThoughtPart(entry));
+
+      if (currentEntries.length <= previousEntries.length) {
+        window.__rvTtsLastAutoRaw = stableCurrent;
+        return;
+      }
+
+      const freshEntries = currentEntries.slice(previousEntries.length);
+
+
+      if (freshEntries.length) {
+        window.__rvTtsLastAutoRaw = stableCurrent;
+        rvSpeakEntriesSequentially(freshEntries).catch((err) => {
+          console.warn("Rendezvous auto voice failed.", err);
+          rvTtsStatus("Auto voice failed.");
+        });
+      } else {
+        window.__rvTtsLastAutoRaw = stableCurrent;
+      }
+    }, state.sessionActive ? 3200 : 400);
+  }
+
+  function initRvTtsControls(root) {
+    if (!root || root.__rvTtsControlsReady) return;
+    root.__rvTtsControlsReady = true;
+
+    root.querySelectorAll(".rv-tts-voice-select").forEach((select) => {
+      const slot = select.getAttribute("data-rv-tts-slot") || "one";
+      select.addEventListener("change", () => {
+        rvSetStoredVoice(slot, select.value || "");
+        const label = slot === "two" ? "Voice 2" : slot === "user" ? "User voice" : "Voice 1";
+        rvTtsStatus(select.value ? `${label} set: ${select.value}` : `${label}: default voice.`);
+      });
+    });
+
+    const rateInput = root.querySelector("#rv-tts-rate");
+    if (rateInput) {
+      rateInput.value = String(rvStoredSpeed());
+      rateInput.addEventListener("input", () => {
+        const value = Number(rateInput.value || "1");
+        rvSetStoredSpeed(value);
+        rvTtsStatus(`Speed: ${value.toFixed(2)}x`);
+      });
+    }
+
+    const auto = root.querySelector("#rv-tts-auto");
+    if (auto) {
+      rvUpdateAutoButton(root);
+      auto.addEventListener("click", () => {
+        const next = !rvAutoVoiceEnabled();
+        rvSetAutoVoice(next);
+        window.__rvTtsLastAutoRaw = state.lastTranscript || "";
+        rvUpdateAutoButton(root);
+        rvTtsStatus(next ? "Auto voice on. New turns will speak." : "Auto voice off.");
+      });
+    }
+
+    const stop = root.querySelector("#rv-tts-stop");
+    if (stop) {
+      stop.addEventListener("click", async () => {
+        await rvStopSpeaking();
+      });
+    }
+
+    setTimeout(() => rvLoadSapphireVoices(root), 50);
+  }
+
+  window.__rvTtsAutoTimer = null;
+
+  window.addEventListener("beforeunload", () => {
+    rvStopSpeaking();
+  });
+
+
 
   function turnsEachToMessages(value) {
     return Math.max(1, parseInt(value, 10) || 2) * 2;
@@ -362,6 +953,31 @@
               <div style="display:flex; gap:8px; flex-wrap:wrap;">
                 <button id="rv-copy" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Copy Transcript</button>
                 <button id="rv-toggle-thoughts" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">&#x1F9E0; Inner thoughts: <span id="rv-toggle-thoughts-label">Off</span></button>
+                <button id="rv-tts-auto" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #16a34a; background:rgba(20, 83, 45, .22); color:#bbf7d0; font-weight:700;">⚪ Auto Voice: Off</button>
+                <button id="rv-tts-stop" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #dc2626; background:rgba(127, 29, 29, .22); color:#fecaca; font-weight:700;">⏹ Stop Voice</button>
+                <label style="display:flex; align-items:center; gap:6px; color:#c4b5fd; font-size:13px;">
+                  Voice 1
+                  <select class="rv-tts-voice-select" data-rv-tts-slot="one" title="Voice for Persona 1" style="max-width:180px; padding:9px 10px; border-radius:10px; border:1px solid #7c3aed; background:rgba(24,24,32,.96); color:#e9d5ff;">
+                    <option value="">Loading voices…</option>
+                  </select>
+                </label>
+                <label style="display:flex; align-items:center; gap:6px; color:#c4b5fd; font-size:13px;">
+                  Voice 2
+                  <select class="rv-tts-voice-select" data-rv-tts-slot="two" title="Voice for Persona 2" style="max-width:180px; padding:9px 10px; border-radius:10px; border:1px solid #7c3aed; background:rgba(24,24,32,.96); color:#e9d5ff;">
+                    <option value="">Loading voices…</option>
+                  </select>
+                </label>
+                <label style="display:flex; align-items:center; gap:6px; color:#c4b5fd; font-size:13px;">
+                  User
+                  <select class="rv-tts-voice-select" data-rv-tts-slot="user" title="Voice for Donna/User interjections" style="max-width:180px; padding:9px 10px; border-radius:10px; border:1px solid #7c3aed; background:rgba(24,24,32,.96); color:#e9d5ff;">
+                    <option value="">Loading voices…</option>
+                  </select>
+                </label>
+                <label style="display:flex; align-items:center; gap:6px; color:#c4b5fd; font-size:13px;">
+                  Speed
+                  <input id="rv-tts-rate" type="range" min="0.65" max="1.35" step="0.05" value="1" style="width:82px;">
+                </label>
+                <span id="rv-tts-status" style="font-size:13px; color:#c4b5fd;">Voice ready.</span>
                 <button id="rv-export" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Save Session</button>
                 <button type="button" id="rv-archive" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Create Archive</button>
               </div>
@@ -414,6 +1030,7 @@
 
     const status = root.querySelector("#rv-status");
     const transcript = root.querySelector("#rv-transcript");
+    initRvTtsControls(root);
 
     function updateInnerThoughtsToggle() {
       const label = root.querySelector("#rv-toggle-thoughts-label");
@@ -534,6 +1151,7 @@
         transcript.scrollTop = transcript.scrollHeight;
       });
       state.lastTranscript = String(text || "");
+      rvMaybeAutoSpeakTranscript(text);
       state.pendingDividerLabel = "";
     }
 
@@ -847,10 +1465,17 @@
     async function refreshState() {
       const data = await api("session/state");
       const s = data.state || {};
+      const wasActive = !!state.sessionActive;
+      state.sessionActive = !!s.active;
       state.viewMode = "live";
       setTranscript(s.transcript_text || "");
       const hasTranscript = !!String(s.transcript_text || "").trim();
       setStatus(s.active ? "Running..." : (hasTranscript ? "Paused" : "Idle"));
+
+      if (wasActive && !state.sessionActive && rvAutoVoiceEnabled()) {
+        setTimeout(() => rvMaybeAutoSpeakTranscript(s.transcript_text || ""), 150);
+      }
+
       return s;
     }
 
@@ -1128,6 +1753,12 @@ window.__rvRefreshState = window.__rvRefreshState || (async () => {});
   function unmount() {
     if (window.__rvStopPolling) {
       try { window.__rvStopPolling(); } catch (e) {}
+    }
+    if (window.__rvTtsStopSpeaking) {
+      try {
+        const p = window.__rvTtsStopSpeaking();
+        if (p && p.catch) p.catch(() => {});
+      } catch (e) {}
     }
     const existing = document.getElementById(ROOT_ID);
     if (existing) {
