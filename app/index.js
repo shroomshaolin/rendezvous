@@ -1152,7 +1152,7 @@ window.__rvRefreshState = window.__rvRefreshState || (async () => {});
     root.style.position = "fixed";
     root.style.left = "76px";
     root.style.right = "16px";
-    root.style.top = "92px";
+    root.style.top = "0px";
     root.style.bottom = "16px";
     root.style.overflow = "auto";
     root.style.zIndex = "1";
