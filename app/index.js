@@ -474,10 +474,19 @@
     return speaker ? `${speaker}: ${body}` : body;
   }
 
+  function rvEntrySpeechText(entry) {
+    if (!entry || isInnerThoughtPart(entry)) return "";
+
+    const body = rvCleanText(entry.body || entry.text || entry.content || "");
+    if (!body) return "";
+
+    return body;
+  }
+
   async function rvSpeakEntriesSequentially(entries) {
     const readable = entries
       .filter(entry => entry && !isInnerThoughtPart(entry))
-      .map(entry => ({ entry, text: rvEntryReadText(entry) }))
+      .map(entry => ({ entry, text: rvEntrySpeechText(entry) }))
       .filter(item => item.text);
 
     if (!readable.length) return;
