@@ -10,7 +10,7 @@
     "rendezvous/tools/rendezvous.py": "sha256:3b62e42676ba5bd2c80099ca17c71158425d0b2c36c778485b6cd0ef27f730be",
     "routes/action.py": "sha256:d05884bc3b59c8629a3269f16bc183c51862c9b3a9600bda73413332c52d123e",
     "routes/app_api.py": "sha256:1dfcb73ff8f43ef20a55d99eee61e9b2d3c13e744b1f06ba3c03e46ed1c2c80c",
-    "tools/rendezvous.py": "sha256:2cc42c60fe12898913d55edd515a2e81868d157d1b8fcaae1006ae791743faf2"
+    "tools/rendezvous.py": "sha256:a413d43a5b7af67254adc06b469883c0e75dfea05631a39e7be551cd6ed4d2c9"
   },
-  "signature": "2RMCDZo2BhYR25OorZLrUJtsPJJkaUqbNYCcyqRyG5umRtqnWoxYXPN0FYHu3HYyEQTkuOguN6V5cCJfxgoxCQ=="
+  "signature": "OASKTjoTAXagCQf/N2NEWykKHn5LN1Y0YF+foBDH80p2Yqc8RQYqpn/iT5fnR+RLNtuipGol+rIdcSRm3j27Bg=="
 }

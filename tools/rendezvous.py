@@ -585,21 +585,9 @@ def _build_identity_block(bundle):
 
 
 def _create_chat(name):
-    attempts = [
-        {"name": name},
-        {"chat_name": name},
-        {"title": name},
-    ]
-
-    last_error = None
-    for body in attempts:
-        try:
-            return _api("POST", "/api/chats", body)
-        except Exception as e:
-            last_error = e
-
-    raise RuntimeError(f"Could not create chat '{name}': {last_error}")
-
+    # Do not create visible Sapphire chats for plugin-private model calls.
+    # The plugin carries context in its own prompt/transcript state.
+    return {"ok": True, "skipped": "visible chat creation disabled"}
 
 def _delete_chat(name):
     try:
@@ -608,24 +596,45 @@ def _delete_chat(name):
         pass
 
 
-def _chat_once(prompt, chat_name):
-    attempts = [
-        {"text": prompt, "chat_name": chat_name},
-        {"message": prompt, "chat_name": chat_name},
-        {"input": prompt, "chat_name": chat_name},
-    ]
+def _chat_once(prompt, chat_name=None):
+    """
+    Run plugin-private LLM work through Sapphire's internal isolated chat path.
 
-    last_error = None
-    for body in attempts:
-        try:
-            result = _api("POST", "/api/chat", {**body, "isolated": True, "task_settings": {}})
-            text = _extract_reply_text(result)
-            if text:
-                return text
-        except Exception as e:
-            last_error = e
+    Do not call /api/chat here. That route writes to the active visible chat.
+    Do not create or pass chat_name here. The plugin carries its own transcript state.
+    """
+    try:
+        from core.api_fastapi import get_system
 
-    raise RuntimeError(f"/api/chat did not return usable text: {last_error}")
+        system = get_system()
+        if not system or not getattr(system, "llm_chat", None):
+            raise RuntimeError("Sapphire system object is not available")
+
+        response = system.llm_chat.isolated_chat(
+            prompt,
+            task_settings={
+                "prompt": "sapphire",
+                "toolset": "none",
+                "provider": "auto",
+                "model": "",
+                "memory_scope": "none",
+                "knowledge_scope": "none",
+                "people_scope": "none",
+                "goal_scope": "none",
+                "context_limit": 0,
+                "max_tool_rounds": 1,
+                "max_parallel_tools": 1,
+            },
+        )
+
+        text = _clean_text(response)
+        if text:
+            return text
+
+        raise RuntimeError("isolated_chat returned no usable text")
+    except Exception as e:
+        raise RuntimeError(f"internal isolated chat failed: {e}")
+
 
 
 def _expanded_transcript_entries(msg):
