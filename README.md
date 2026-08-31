@@ -1,70 +1,73 @@
-# Rendezvous
+# Rendezvous 🍺
 
-Rendezvous is a Sapphire plugin for persona-to-persona conversations with automatic transcript archiving and outside transcript access tools.
+Give two Sapphire personas a scene, let them talk, and keep the conversation.
 
-## Screenshot
+Rendezvous is a [Sapphire](https://github.com/ddxfish/sapphire) plugin for character dialogue, storytelling, and persona experiments. Choose two personas, set the scene and tempo, then watch their exchange or join in yourself.
 
-![Rendezvous interface](rendevous-screenshot.png)
+[Sapphire Store](https://sapphireblue.dev/plugins/rendezvous/) · [Releases](https://github.com/shroomshaolin/rendezvous/releases) · [Report a problem](https://github.com/shroomshaolin/rendezvous/issues)
 
-## Features
+## Interface preview
 
-- Persona-to-persona conversation flow
-- Transcript handling
-- Archive/session support
-- Simple Sapphire plugin structure
-- Outside transcript access tools
+![Rendezvous showing persona selection, a scene, transcript, and session controls](rendevous-screenshot.png)
 
-## New in this update
+This screenshot shows an earlier interface; controls may vary by version.
 
-Rendezvous can now archive ended sessions and let personas outside the app access those saved transcripts.
+## What you can do
 
-### Transcript archive
+- Choose two personas, a scene seed, and a conversation tempo.
+- Continue their exchange or add your own message.
+- Copy or save transcripts and revisit archived sessions.
+- Automatically archive a live transcript when you end its session.
+- Use optional Auto Voice playback and the inner-thought display toggle. “Inner thoughts” are generated character text, not access to a model's private reasoning.
+- Let other Sapphire personas retrieve archived conversations through the tools below.
 
-When a live Rendezvous session is ended, the transcript is saved automatically.
+## Requirements and installation
 
-### Outside transcript tools
+You need a running Sapphire installation with a configured language model and available personas. This release requires Sapphire's `LLMChat.isolated_chat` method to keep its model replies out of the active main chat. Not every Sapphire build provides it; an exact minimum version has not been established. Auto Voice also needs a working speech setup.
 
-Rendezvous now exposes separate tools so archived sessions can be accessed outside the app:
+1. In Sapphire, open **Settings → Plugins → Install Plugin**.
+2. Paste `https://github.com/shroomshaolin/rendezvous`.
+3. Install it, check its signature status, and enable Rendezvous.
+4. Open **Apps → Rendezvous**. Reload the interface or restart Sapphire if it does not appear.
 
-- `sessions` — list archived rendezvous sessions
-- `latest` — open the latest archived rendezvous session
-- `open` — open an archived rendezvous session by filename
-- `pick` — open an archived rendezvous session by index (`0` = newest)
+For manual installation, place this repository's root contents in `<Sapphire>/user/plugins/rendezvous/`, with `plugin.json` directly inside that folder. Do not install the older nested `rendezvous/` directory as a separate plugin.
 
-### Why this matters
-This makes it possible for personas outside Rendezvous to read prior Rendezvous conversations instead of being cut off from them.
+## Try your first conversation
 
-### In-app archive
-The archive area inside Rendezvous can refresh and display saved transcript sessions from the plugin archive.
+1. Select **Persona 1** and **Persona 2**.
+2. Enter a scene such as “Two old friends meet for coffee to plan a journey.”
+3. Choose a short tempo and select **Start Rendezvous**.
+4. Use **Continue** for another exchange or send your own message.
+5. Use **End** to close the session and archive its transcript.
 
-## Files
+## Archive tools
 
-- `plugin.json` — plugin manifest
-- `app/index.js` — frontend/app entry
-- `routes/app_api.py` — API routes
-- `routes/action.py` — action routes
-- `tools/rendezvous.py` — main plugin tool logic
+Enable the relevant Rendezvous tools in an outside persona's toolset to use them there.
 
-## Installation
+| Tool | Purpose |
+| --- | --- |
+| `sessions` | List archived sessions. |
+| `latest` | Read the newest archived session. |
+| `open` | Read a session by its transcript filename. |
+| `pick` | Read a session by index; `0` is the newest. |
 
-1. Copy the plugin into your Sapphire plugins directory.
-2. Restart Sapphire if needed.
-3. Enable the plugin from the Sapphire interface.
+All five tool functions, including `rendezvous`, are implemented in `tools/rendezvous.py`.
 
-## Notes
+## Troubleshooting and privacy
 
-This repository is intended for the public plugin code only.
+- **Missing `isolated_chat`:** use a compatible Sapphire build or an explicitly tested compatibility fix. Reinstalling the same plugin alone will not add the method to Sapphire.
+- **“Tampered” or hash mismatch:** do not bypass verification. Use an intact signed release or have the author re-sign changes with their authorized key. Even README edits require re-signing; see [Sapphire's signing guide](https://github.com/ddxfish/sapphire/blob/main/docs/plugin-author/signing.md).
+- **Empty persona list:** check that personas exist in the Sapphire installation running this plugin.
+- **No voice:** check Sapphire's speech settings; voice is optional.
 
-Excluded from the repository:
+Saved session history uses the plugin's `data/` directory; automatic transcript archives use Sapphire's `user/rendezvous_data/transcripts/`. Back these up before replacing or removing an installation. Cloud models may receive conversation text, and provider charges depend on your configuration.
 
-- `data/`
-- `__pycache__/`
-- `*.pyc`
+For bug reports, include plugin and Sapphire versions, model/provider, reproduction steps, and a redacted error. Keep API keys and private transcripts out of public issues.
 
-## Development
+## More by Donna
 
-This plugin was prepared for GitHub publication and possible future plugin-store submission.
+[Lantern](https://github.com/shroomshaolin/Lantern) offers guided reflection. [The Peg & Pint](https://github.com/shroomshaolin/peg-and-pint) brings a cribbage table to Sapphire.
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+[MIT](LICENSE).
