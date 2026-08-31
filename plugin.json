@@ -6,8 +6,7 @@
   "author": "Donna",
   "capabilities": {
     "tools": [
-      "tools/rendezvous.py",
-      "tools/archive_reader.py"
+      "tools/rendezvous.py"
     ],
     "routes": [
       {
@@ -63,12 +62,12 @@
       {
         "method": "POST",
         "path": "transcript/delete",
-        "handler": "routes/app_api.py:delete_transcript"
+        "handler": "routes/app_api.py:delete_history"
       },
       {
         "method": "POST",
         "path": "transcripts/delete",
-        "handler": "routes/app_api.py:delete_transcript"
+        "handler": "routes/app_api.py:delete_history"
       },
       {
         "method": "GET",
