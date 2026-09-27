@@ -546,10 +546,87 @@
       const voice = rvVoiceForEntry(item.entry);
 
       rvScrollSpeechIntoView(item.text);
-      await rvSpeakText(item.text, speaker ? `Reading ${speaker}` : "Reading turn", voice);
+
+      const rvTranscript = document.querySelector("#rv-transcript");
+
+      if (rvTranscript) {
+        const bubbles = Array.from(
+          rvTranscript.querySelectorAll(".rv-speaker-bubble")
+        );
+
+        bubbles.forEach(el => {
+          el.classList.remove("rv-speaking-active");
+        });
+
+        const wantedText = rvNormText(item.text || "");
+        const wantedSpeaker = rvNormText(speaker || "");
+
+        const reversed = bubbles.slice().reverse();
+
+        let activeBubble = reversed.find(el => {
+          const bodyEl = el.lastElementChild;
+          const speakerEl = el.querySelector("span");
+
+          const bodyText = rvNormText(
+            bodyEl ? bodyEl.textContent || "" : ""
+          );
+
+          const bubbleSpeaker = rvNormText(
+            speakerEl ? speakerEl.textContent || "" : ""
+          );
+
+          const speakerMatches =
+            !wantedSpeaker ||
+            bubbleSpeaker === wantedSpeaker;
+
+          const textMatches =
+            !wantedText ||
+            bodyText.includes(wantedText) ||
+            wantedText.includes(bodyText);
+
+          return speakerMatches && textMatches;
+        });
+
+        if (!activeBubble && wantedSpeaker) {
+          activeBubble = reversed.find(el => {
+            const speakerEl = el.querySelector("span");
+            return rvNormText(
+              speakerEl ? speakerEl.textContent || "" : ""
+            ) === wantedSpeaker;
+          });
+        }
+
+        if (activeBubble) {
+          activeBubble.classList.add("rv-speaking-active");
+
+          requestAnimationFrame(() => {
+            const panelRect = rvTranscript.getBoundingClientRect();
+            const bubbleRect = activeBubble.getBoundingClientRect();
+
+            const delta =
+              (bubbleRect.top + bubbleRect.height / 2) -
+              (panelRect.top + panelRect.height / 2);
+
+            rvTranscript.scrollTo({
+              top: Math.max(0, rvTranscript.scrollTop + delta),
+              behavior: "smooth"
+            });
+          });
+        }
+      }
+
+      await rvSpeakText(
+        item.text,
+        speaker ? `Reading ${speaker}` : "Reading turn",
+        voice
+      );
 
       if (window.__rvTtsQueueToken !== token) return;
     }
+
+    document
+      .querySelectorAll("#rv-transcript .rv-speaker-bubble")
+      .forEach(el => el.classList.remove("rv-speaking-active"));
 
     rvClearSpeakingTurnHighlight();
   }
@@ -700,6 +777,33 @@
     return color || "";
   }
 
+
+  // RENDEZVOUS_GENERIC_AVATARS_V1
+  function rvPersonaRecord(token) {
+    const key = String(token || "").trim().toLowerCase();
+    return (state.personas || []).find(p => {
+      const pk = String(p.key || "").trim().toLowerCase();
+      const pn = String(p.name || "").trim().toLowerCase();
+      return key === pk || key === pn;
+    }) || null;
+  }
+
+  function rvAvatarUrl(name) {
+    return `/api/personas/${encodeURIComponent(name)}/avatar`;
+  }
+
+  function rvAvatarFallback(name, color) {
+    const initial = String(name || "?").trim().charAt(0).toUpperCase() || "?";
+    const c = color || "#888888";
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">` +
+      `<circle cx="50" cy="50" r="47" fill="${c}18" stroke="${c}" stroke-width="3"/>` +
+      `<text x="50" y="54" text-anchor="middle" dominant-baseline="middle"` +
+      ` font-family="system-ui,sans-serif" font-size="44" font-weight="700" fill="${c}">` +
+      `${initial}</text></svg>`;
+    return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  }
+
   function speakerColor(name) {
     const key = String(name || "").trim().toLowerCase();
 
@@ -729,6 +833,154 @@
 
     return palette[Math.abs(hash) % palette.length];
   }
+
+
+  // RENDEZVOUS_INLINE_BUBBLE_AVATARS_V1
+  function rvSpeakerMeta(name) {
+    const key = rvNormText(name || "");
+    const rec = rvPersonaRecord(key) || rvPersonaRecord(name);
+    const label = rvCleanText((rec && (rec.name || rec.key)) || name || "");
+    const color = speakerColor(label || name || "");
+    const token = rvCleanText((rec && (rec.key || rec.name)) || name || "");
+    const src = (rec && rec.avatar)
+      ? rvAvatarUrl(token)
+      : rvAvatarFallback(label || token || "?", color);
+
+    return { rec, label, color, src };
+  }
+
+  function rvSpeakerIsRight(name) {
+    const key = rvNormText(name || "");
+    const right = rvNormText(state.persona2 || "");
+    return !!key && !!right && key === right;
+  }
+
+  function rvTightenRendezvousChrome(root) {
+    if (!root) return;
+
+    const stagePanel =
+      root.querySelector(".rv-stage-panel") ||
+      (document.querySelector("#rv-transcript")
+        ? document.querySelector("#rv-transcript").closest("section")
+        : null);
+
+    const controlPanel = root.querySelector(".rv-control-panel");
+
+    if (stagePanel) {
+      Array.from(stagePanel.querySelectorAll("h3")).forEach((el) => {
+        const t = rvNormText(el.textContent || "");
+        if (t === "transcript") el.remove();
+      });
+
+      Array.from(stagePanel.children).forEach((el) => {
+        if (!(el instanceof HTMLElement)) return;
+        const t = rvNormText(el.textContent || "");
+        if (!t) return;
+
+        if (
+          el.querySelector("img") &&
+          t.includes("persona 1") &&
+          t.includes("persona 2")
+        ) {
+          el.remove();
+        }
+      });
+    }
+
+    if (controlPanel) {
+      Array.from(controlPanel.children).forEach((el) => {
+        if (
+          el instanceof HTMLElement &&
+          el.tagName === "H3" &&
+          rvNormText(el.textContent || "") === "controls"
+        ) {
+          el.remove();
+        }
+      });
+    }
+  }
+
+  function rvInlineAvatarsBesideBubbles(root, transcriptEl) {
+    if (!transcriptEl) return;
+
+    rvTightenRendezvousChrome(root);
+
+    Array.from(transcriptEl.querySelectorAll(".rv-turn-row")).forEach((row) => {
+      const bubble = row.querySelector(".rv-speaker-bubble");
+      if (bubble && row.parentNode === transcriptEl) {
+        transcriptEl.insertBefore(bubble, row);
+      }
+      row.remove();
+    });
+
+    const bubbles = Array.from(
+      transcriptEl.querySelectorAll(".rv-speaker-bubble")
+    );
+
+    bubbles.forEach((bubble) => {
+      const speakerEl = bubble.querySelector("span");
+      const speaker = rvCleanText(speakerEl ? (speakerEl.textContent || "") : "");
+      if (!speaker || rvNormText(speaker) === "scene") return;
+
+      const meta = rvSpeakerMeta(speaker);
+
+      // RENDEZVOUS_AVATAR_SIDE_FIX_V1
+      // The bubble already knows which selected persona it belongs to.
+      // Use that instead of trying to rediscover the speaker from state.
+      const p2Select = document.querySelector("#rv-persona-2");
+      const p2Token = p2Select ? String(p2Select.value || "") : "";
+      const p2Record = rvPersonaRecord(p2Token);
+
+      const speakerKey = rvNormText(speaker || "");
+      const p2Names = [
+        p2Token,
+        p2Record && p2Record.key,
+        p2Record && p2Record.name
+      ]
+        .filter(Boolean)
+        .map(v => rvNormText(v));
+
+      const isRight = p2Names.includes(speakerKey);
+
+      bubble.setAttribute("data-rv-side", isRight ? "right" : "left");
+
+      const row = document.createElement("div");
+      row.className = "rv-turn-row " + (isRight ? "rv-turn-row-right" : "rv-turn-row-left");
+
+      bubble.parentNode.insertBefore(row, bubble);
+
+      const avatarWrap = document.createElement("div");
+      avatarWrap.className = "rv-turn-avatar-wrap";
+
+      const avatar = document.createElement("img");
+      avatar.className = "rv-turn-avatar";
+      avatar.alt = meta.label || speaker;
+      avatar.loading = "lazy";
+      avatar.src = meta.src;
+
+      if (meta.rec && meta.rec.avatar) {
+        avatar.onerror = () => {
+          avatar.onerror = null;
+          avatar.src = rvAvatarFallback(meta.label || speaker, meta.color);
+        };
+      }
+
+      avatarWrap.appendChild(avatar);
+
+      bubble.style.margin = "0";
+      bubble.style.flex = "0 1 84%";
+      bubble.style.maxWidth = "84%";
+
+      if (isRight) {
+        row.appendChild(bubble);
+        row.appendChild(avatarWrap);
+      } else {
+        row.appendChild(avatarWrap);
+        row.appendChild(bubble);
+      }
+    });
+  }
+
 
   function splitTranscript(text) {
     const raw = String(text || "");
@@ -859,7 +1111,7 @@
 
     if (current.scene) {
       html.push(
-        `<div style="
+        `<div class="rv-scene-card" style="
           position: sticky;
           top: 0;
           z-index: 2;
@@ -911,8 +1163,30 @@
       const color = speakerColor(entry.speaker);
       const isNew = firstNewIndex !== -1 && index >= firstNewIndex;
 
+      const speakerKey = String(entry.speaker || "").trim().toLowerCase();
+
+      const p1Record = rvPersonaRecord(state.persona1 || "");
+      const p2Record = rvPersonaRecord(state.persona2 || "");
+
+      const p1Names = [
+        state.persona1,
+        p1Record && p1Record.key,
+        p1Record && p1Record.name
+      ].filter(Boolean).map(v => String(v).trim().toLowerCase());
+
+      const p2Names = [
+        state.persona2,
+        p2Record && p2Record.key,
+        p2Record && p2Record.name
+      ].filter(Boolean).map(v => String(v).trim().toLowerCase());
+
+      const side =
+        p2Names.includes(speakerKey) ? "right" :
+        p1Names.includes(speakerKey) ? "left" :
+        "center";
+
       html.push(
-        `<div style="
+        `<div class="rv-speaker-bubble" data-rv-side="${side}" style="--speaker-color:${color};
           margin: 0 0 12px 0;
           padding: 10px 12px;
           border-radius: 12px;
@@ -968,8 +1242,960 @@
 
   function render(root) {
     root.innerHTML = `
-      <div style="max-width: 1580px; margin: 0 auto; padding: 24px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px;">
+      <style>
+        /* RENDEZVOUS_FACELIFT_V1 */
+        .rv-shell {
+          max-width: 1700px !important;
+          margin: 0 auto;
+          padding: 18px 22px 28px !important;
+          color: #f7f3ff;
+          font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+        }
+        .rv-hero {
+          padding: 16px 18px;
+          margin-bottom: 16px !important;
+          border: 1px solid rgba(167,139,250,.22);
+          border-radius: 18px;
+          background:
+            radial-gradient(circle at 18% 0%, rgba(124,58,237,.18), transparent 34%),
+            linear-gradient(135deg, rgba(35,25,55,.78), rgba(17,15,28,.90));
+          box-shadow: 0 18px 45px rgba(0,0,0,.22);
+        }
+        .rv-hero h2 {
+          font-size: 25px;
+          letter-spacing: -.02em;
+        }
+        #rv-status {
+          padding: 7px 11px;
+          border-radius: 999px;
+          background: rgba(124,58,237,.12);
+          border: 1px solid rgba(167,139,250,.22);
+          color: #ddd6fe;
+          font-size: 13px;
+        }
+        .rv-shell-grid {
+          grid-template-columns: 240px minmax(560px, 1fr) 240px !important;
+          gap: 16px !important;
+        }
+        .rv-panel {
+          border: 1px solid rgba(167,139,250,.22) !important;
+          border-radius: 18px !important;
+          background:
+            linear-gradient(180deg, rgba(38,31,52,.72), rgba(20,18,30,.72));
+          box-shadow: 0 18px 45px rgba(0,0,0,.20);
+        }
+        .rv-setup-panel,
+        .rv-control-panel {
+          position: sticky;
+          top: 18px;
+        }
+        .rv-stage-panel {
+          min-height: 650px !important;
+          max-height: calc(100vh - 126px) !important;
+          padding: 14px 16px 16px !important;
+          background:
+            radial-gradient(circle at 50% 0%, rgba(124,58,237,.09), transparent 32%),
+            linear-gradient(180deg, rgba(24,22,34,.92), rgba(15,14,22,.94));
+        }
+        .rv-toolbar {
+          margin: -2px -2px 8px !important;
+          padding: 6px 2px 12px !important;
+          background: rgba(18,16,28,.88) !important;
+          border-bottom: 1px solid rgba(167,139,250,.16);
+          backdrop-filter: blur(12px);
+        }
+        .rv-toolbar h3 {
+          font-size: 18px;
+          letter-spacing: .01em;
+        }
+        .rv-shell button,
+        .rv-shell select,
+        .rv-shell textarea,
+        .rv-shell input {
+          font-family: inherit;
+        }
+        .rv-shell button {
+          transition: transform .14s ease, filter .14s ease, box-shadow .14s ease;
+        }
+        .rv-shell button:hover {
+          transform: translateY(-1px);
+          filter: brightness(1.09);
+          box-shadow: 0 8px 20px rgba(0,0,0,.18);
+        }
+        .rv-shell select,
+        .rv-shell textarea {
+          background: rgba(11,10,18,.72);
+          color: #f4f0ff;
+          border: 1px solid rgba(167,139,250,.22);
+          outline: none;
+        }
+        .rv-shell select:focus,
+        .rv-shell textarea:focus {
+          border-color: rgba(167,139,250,.68);
+          box-shadow: 0 0 0 3px rgba(124,58,237,.12);
+        }
+        #rv-transcript {
+          font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+          line-height: 1.58 !important;
+          min-height: 420px !important;
+          max-height: calc(100vh - 245px) !important;
+          padding: 10px 4px 24px !important;
+          scroll-behavior: smooth;
+        }
+        #rv-transcript > div {
+          margin: 10px 0 !important;
+          padding: 14px 16px !important;
+          border-radius: 16px !important;
+          border: 1px solid rgba(167,139,250,.14) !important;
+          background: rgba(255,255,255,.035) !important;
+          box-shadow: 0 8px 22px rgba(0,0,0,.13);
+        }
+        #rv-transcript > div:nth-child(odd) {
+          margin-right: 4% !important;
+        }
+        #rv-transcript > div:nth-child(even) {
+          margin-left: 4% !important;
+        }
+        #rv-user-message {
+          min-height: 122px;
+          resize: vertical;
+          line-height: 1.45;
+        }
+        #rv-history-list {
+          background: rgba(9,8,15,.38) !important;
+          border-color: rgba(167,139,250,.16) !important;
+        }
+        .rv-panel h3 {
+          color: #f2ecff;
+        }
+        .rv-panel label > div {
+          color: #d8d0e8;
+          font-size: 13px;
+          font-weight: 700;
+          letter-spacing: .01em;
+        }
+        @media (max-width: 1180px) {
+          .rv-shell-grid {
+            grid-template-columns: 220px minmax(0,1fr) !important;
+          }
+          .rv-control-panel {
+            position: static;
+            grid-column: 1 / -1;
+          }
+        }
+        @media (max-width: 820px) {
+          .rv-shell {
+            padding: 12px !important;
+          }
+          .rv-shell-grid {
+            grid-template-columns: 1fr !important;
+          }
+          .rv-setup-panel,
+          .rv-control-panel {
+            position: static;
+          }
+          .rv-stage-panel {
+            min-height: 560px !important;
+            max-height: none !important;
+          }
+        }
+      </style>
+
+<style>
+/* RENDEZVOUS_BURGUNDY_GOLD_V1 */
+
+.rv-shell{
+  color:#f3e8da !important;
+}
+
+.rv-hero{
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255,214,120,.10), transparent 34%),
+    linear-gradient(135deg, rgba(58,16,27,.97), rgba(23,16,22,.98)) !important;
+  border:1px solid rgba(198,156,84,.34) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,235,190,.08),
+    0 12px 30px rgba(0,0,0,.22) !important;
+}
+
+.rv-panel{
+  background:
+    linear-gradient(180deg, rgba(40,14,24,.94), rgba(18,16,22,.97)) !important;
+  border:1px solid rgba(171,126,58,.22) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,235,190,.04),
+    0 10px 24px rgba(0,0,0,.18) !important;
+}
+
+.rv-stage-panel{
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255,217,133,.05), transparent 28%),
+    linear-gradient(180deg, rgba(29,18,27,.98), rgba(14,15,20,.99)) !important;
+}
+
+.rv-toolbar{
+  background:rgba(28,18,24,.96) !important;
+  border-bottom:1px solid rgba(186,140,70,.18) !important;
+}
+
+.rv-shell h2,
+.rv-shell h3{
+  color:#f6ead6 !important;
+}
+
+.rv-shell label > div{
+  color:#d9c2a0 !important;
+}
+
+.rv-shell select,
+.rv-shell textarea{
+  background:linear-gradient(180deg, rgba(18,12,17,.95), rgba(10,11,14,.98)) !important;
+  color:#f4e8dc !important;
+  border:1px solid rgba(160,117,58,.28) !important;
+  box-shadow: inset 0 1px 0 rgba(255,235,190,.03) !important;
+}
+
+.rv-shell select:focus,
+.rv-shell textarea:focus{
+  border-color:rgba(214,171,97,.68) !important;
+  box-shadow:
+    0 0 0 3px rgba(201,154,73,.10),
+    inset 0 1px 0 rgba(255,235,190,.06) !important;
+}
+
+#rv-status{
+  color:#f2dfbf !important;
+  background:linear-gradient(180deg, rgba(83,31,44,.60), rgba(46,19,27,.70)) !important;
+  border:1px solid rgba(192,149,79,.32) !important;
+  box-shadow: inset 0 1px 0 rgba(255,233,186,.08) !important;
+  padding:8px 16px !important;
+  border-radius:999px !important;
+}
+
+/* Metallic gold buttons */
+#rv-start,
+#rv-continue,
+#rv-copy,
+#rv-toggle-thoughts,
+#rv-export,
+#rv-archive,
+#rv-send,
+#rv-refresh-history{
+  background:
+    linear-gradient(180deg,
+      rgba(246,220,158,.95) 0%,
+      rgba(211,171,95,.92) 44%,
+      rgba(145,102,40,.92) 100%) !important;
+  color:#2a160a !important;
+  border:1px solid #d8b06a !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,245,214,.72),
+    inset 0 -1px 0 rgba(102,63,18,.42),
+    0 3px 10px rgba(0,0,0,.22) !important;
+  text-shadow:0 1px 0 rgba(255,245,214,.35) !important;
+  font-weight:800 !important;
+}
+
+/* Green-ish live control can stay muted but elegant */
+#rv-tts-auto{
+  background:
+    linear-gradient(180deg,
+      rgba(148,164,124,.92) 0%,
+      rgba(107,120,87,.92) 50%,
+      rgba(70,79,56,.92) 100%) !important;
+  color:#eef2e3 !important;
+  border:1px solid #99a57f !important;
+  box-shadow:
+    inset 0 1px 0 rgba(240,247,227,.28),
+    0 3px 10px rgba(0,0,0,.20) !important;
+  font-weight:800 !important;
+}
+
+#rv-end,
+#rv-tts-stop{
+  background:
+    linear-gradient(180deg,
+      rgba(138,58,71,.94) 0%,
+      rgba(105,35,48,.94) 50%,
+      rgba(67,20,30,.96) 100%) !important;
+  color:#f3d6d6 !important;
+  border:1px solid #b16a76 !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,214,214,.14),
+    0 3px 10px rgba(0,0,0,.22) !important;
+  font-weight:800 !important;
+}
+
+#rv-clear{
+  background:
+    linear-gradient(180deg,
+      rgba(197,155,88,.88) 0%,
+      rgba(149,111,54,.90) 52%,
+      rgba(101,70,31,.94) 100%) !important;
+  color:#251509 !important;
+  border:1px solid #d0a761 !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,241,205,.55),
+    0 3px 10px rgba(0,0,0,.20) !important;
+  font-weight:800 !important;
+}
+
+#rv-transcript{
+  color:#f3e6d9 !important;
+}
+
+#rv-transcript > div{
+  background:
+    linear-gradient(145deg, rgba(56,18,31,.76), rgba(20,18,24,.88)) !important;
+  border:1px solid rgba(174,128,60,.20) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,235,190,.03),
+    0 10px 28px rgba(0,0,0,.20) !important;
+}
+
+#rv-history-list{
+  background:rgba(13,10,14,.52) !important;
+  border:1px solid rgba(168,124,58,.20) !important;
+}
+
+#rv-tts-status{
+  color:#d8c29b !important;
+}
+</style>
+
+<style>
+/* RENDEZVOUS_OPTION_A_V1 */
+
+/* ---------- Transcript becomes the room ---------- */
+
+#rv-transcript {
+  padding:18px 10px 32px !important;
+}
+
+/* Empty booth */
+#rv-transcript:empty::before {
+  content:"The booth is quiet. Start the rendezvous when you’re ready.";
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  min-height:330px;
+  margin:10px 4px;
+  padding:30px;
+  text-align:center;
+  color:#bfa77d;
+  font-size:15px;
+  font-style:italic;
+  letter-spacing:.02em;
+  border:1px solid rgba(187,143,72,.13);
+  border-radius:18px;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(120,42,55,.12), transparent 42%),
+    rgba(255,255,255,.012);
+  box-shadow:inset 0 1px 0 rgba(255,230,175,.025);
+}
+
+/* Conversation cards */
+#rv-transcript > div {
+  max-width:88% !important;
+  width:auto !important;
+  margin-top:14px !important;
+  margin-bottom:14px !important;
+  padding:17px 19px !important;
+  border-radius:18px !important;
+  background:
+    linear-gradient(145deg,
+      rgba(65,21,35,.80),
+      rgba(24,18,24,.94)) !important;
+  border-top:1px solid rgba(211,166,91,.17) !important;
+  border-right:1px solid rgba(152,108,50,.12) !important;
+  border-bottom:1px solid rgba(91,57,35,.22) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,235,190,.035),
+    0 10px 26px rgba(0,0,0,.19) !important;
+}
+
+/* Give the exchange a gentle across-the-table rhythm */
+#rv-transcript > div:nth-child(odd) {
+  margin-right:8% !important;
+}
+
+#rv-transcript > div:nth-child(even) {
+  margin-left:8% !important;
+}
+
+/* Scene/opening plaque */
+#rv-transcript > div:first-child {
+  max-width:96% !important;
+  margin-left:auto !important;
+  margin-right:auto !important;
+  background:
+    linear-gradient(180deg,
+      rgba(94,61,28,.20),
+      rgba(41,19,27,.44)) !important;
+  border:1px solid rgba(204,158,79,.20) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,229,168,.05),
+    0 7px 20px rgba(0,0,0,.16) !important;
+}
+
+/* Speaker name treatment */
+#rv-transcript > div span {
+  letter-spacing:.045em !important;
+  text-transform:none;
+}
+
+/* ---------- Make toolbar feel composed instead of crowded ---------- */
+
+.rv-toolbar {
+  padding-bottom:14px !important;
+}
+
+.rv-toolbar > div {
+  width:100%;
+  display:flex !important;
+  align-items:center !important;
+  gap:8px !important;
+  row-gap:10px !important;
+}
+
+/* Conversation buttons */
+#rv-copy,
+#rv-toggle-thoughts,
+#rv-tts-auto,
+#rv-tts-stop {
+  order:1;
+}
+
+/* Voice section */
+.rv-toolbar label {
+  order:2;
+}
+
+.rv-toolbar label:first-of-type {
+  margin-left:6px !important;
+  padding-left:14px !important;
+  border-left:1px solid rgba(197,153,80,.22);
+}
+
+/* Voice status belongs with the voice controls */
+#rv-tts-status {
+  order:2;
+  padding:5px 8px;
+  border-radius:8px;
+  background:rgba(255,255,255,.025);
+}
+
+/* Session/file actions form their own little cluster */
+#rv-export {
+  order:3;
+  margin-left:auto !important;
+}
+
+#rv-archive {
+  order:3;
+}
+
+/* Make top controls a bit less bulky */
+.rv-toolbar button {
+  min-height:38px;
+}
+
+.rv-tts-voice-select {
+  background:rgba(13,11,14,.88) !important;
+  border-color:rgba(176,131,65,.26) !important;
+}
+
+/* ---------- Small finishing touches ---------- */
+
+.rv-stage-panel {
+  box-shadow:
+    inset 0 1px 0 rgba(255,233,187,.025),
+    0 16px 38px rgba(0,0,0,.18) !important;
+}
+
+#rv-user-message {
+  background:
+    linear-gradient(180deg,
+      rgba(26,13,19,.94),
+      rgba(12,12,15,.98)) !important;
+}
+
+/* END_RENDEZVOUS_OPTION_A_V1 */
+</style>
+
+<style>
+/* RENDEZVOUS_CLEAN_ROWS_PERSONA_COLORS_V1 */
+
+/* ---------- TWO CLEAN TOOLBAR ROWS ---------- */
+
+.rv-toolbar > div {
+  display:grid !important;
+  grid-template-columns:repeat(12,minmax(0,1fr)) !important;
+  gap:9px 8px !important;
+  align-items:center !important;
+  width:100% !important;
+}
+
+/* Row 1: actions */
+#rv-copy {
+  grid-row:1;
+  grid-column:1 / 3;
+}
+
+#rv-toggle-thoughts {
+  grid-row:1;
+  grid-column:3 / 6;
+}
+
+#rv-tts-auto {
+  grid-row:1;
+  grid-column:6 / 8;
+}
+
+#rv-tts-stop {
+  grid-row:1;
+  grid-column:8 / 10;
+}
+
+#rv-archive {
+  grid-row:1;
+  grid-column:10 / 13;
+}
+
+/* Archive replaces Save Session */
+#rv-export {
+  display:none !important;
+}
+
+/* Row 2: all voices together */
+.rv-toolbar label:has(select[data-rv-tts-slot="one"]) {
+  grid-row:2;
+  grid-column:1 / 4;
+  margin:0 !important;
+  padding:0 !important;
+  border:0 !important;
+}
+
+.rv-toolbar label:has(select[data-rv-tts-slot="two"]) {
+  grid-row:2;
+  grid-column:4 / 7;
+  margin:0 !important;
+}
+
+.rv-toolbar label:has(select[data-rv-tts-slot="user"]) {
+  grid-row:2;
+  grid-column:7 / 10;
+  margin:0 !important;
+}
+
+.rv-toolbar label:has(#rv-tts-rate) {
+  grid-row:2;
+  grid-column:10 / 12;
+  margin:0 !important;
+}
+
+#rv-tts-status {
+  grid-row:2;
+  grid-column:12 / 13;
+  margin:0 !important;
+  padding:4px 5px !important;
+  font-size:11px !important;
+  text-align:center;
+}
+
+.rv-toolbar button {
+  width:100% !important;
+  min-width:0 !important;
+  white-space:nowrap;
+  padding-left:8px !important;
+  padding-right:8px !important;
+  font-size:13px !important;
+}
+
+.rv-toolbar label {
+  min-width:0 !important;
+  white-space:nowrap;
+}
+
+.rv-toolbar .rv-tts-voice-select {
+  min-width:0 !important;
+  max-width:none !important;
+  width:100% !important;
+}
+
+/* ---------- PERSONA-COLORED CONVERSATION ---------- */
+
+#rv-transcript > .rv-speaker-bubble {
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--speaker-color) 18%, #1a1117 82%),
+      color-mix(in srgb, var(--speaker-color) 7%, #0e0e12 93%)
+    ) !important;
+
+  border:
+    1px solid
+    color-mix(in srgb, var(--speaker-color) 46%, transparent) !important;
+
+  border-left:
+    4px solid
+    color-mix(in srgb, var(--speaker-color) 78%, #d6a85d 22%) !important;
+
+  box-shadow:
+    inset 0 1px 0
+      color-mix(in srgb, var(--speaker-color) 14%, transparent),
+    0 10px 25px rgba(0,0,0,.20) !important;
+}
+
+/* Persona name uses exactly that persona's native color */
+.rv-speaker-bubble span {
+  color:var(--speaker-color) !important;
+  text-shadow:
+    0 0 12px
+    color-mix(in srgb, var(--speaker-color) 25%, transparent);
+}
+
+/* Keep body text warm and readable */
+.rv-speaker-bubble > div:last-child {
+  color:#f1e8dc !important;
+}
+
+/* Scene is a plaque, not one of the speakers */
+#rv-transcript > .rv-scene-card {
+  position:relative !important;
+  top:auto !important;
+  z-index:1 !important;
+
+  max-width:70% !important;
+  margin:4px auto 18px !important;
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(102,72,32,.28),
+      rgba(49,22,29,.62)
+    ) !important;
+
+  border:1px solid rgba(207,162,84,.30) !important;
+  color:#dbc18e !important;
+  text-align:center;
+}
+
+/* Undo the generic odd/even rule for the scene */
+#rv-transcript > .rv-scene-card:nth-child(odd),
+#rv-transcript > .rv-scene-card:nth-child(even) {
+  margin-left:auto !important;
+  margin-right:auto !important;
+}
+
+/* Responsive fallback */
+@media (max-width:1100px) {
+  .rv-toolbar > div {
+    grid-template-columns:repeat(6,minmax(0,1fr)) !important;
+  }
+
+  #rv-copy { grid-row:1; grid-column:1 / 3; }
+  #rv-toggle-thoughts { grid-row:1; grid-column:3 / 5; }
+  #rv-tts-auto { grid-row:1; grid-column:5 / 7; }
+  #rv-tts-stop { grid-row:2; grid-column:1 / 3; }
+  #rv-archive { grid-row:2; grid-column:3 / 7; }
+
+  .rv-toolbar label:has(select[data-rv-tts-slot="one"]) {
+    grid-row:3; grid-column:1 / 3;
+  }
+  .rv-toolbar label:has(select[data-rv-tts-slot="two"]) {
+    grid-row:3; grid-column:3 / 5;
+  }
+  .rv-toolbar label:has(select[data-rv-tts-slot="user"]) {
+    grid-row:3; grid-column:5 / 7;
+  }
+  .rv-toolbar label:has(#rv-tts-rate) {
+    grid-row:4; grid-column:1 / 4;
+  }
+  #rv-tts-status {
+    grid-row:4; grid-column:4 / 7;
+  }
+}
+</style>
+
+<style>
+/* RENDEZVOUS_GENERIC_AVATARS_V1 */
+
+.rv-persona-strip {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 42px minmax(0,1fr);
+  align-items:center;
+  gap:14px;
+  margin:4px 4px 14px;
+  padding:10px 12px;
+  border-top:1px solid rgba(197,153,80,.13);
+  border-bottom:1px solid rgba(197,153,80,.13);
+  background:
+    linear-gradient(
+      90deg,
+      rgba(255,255,255,.01),
+      rgba(116,32,48,.08),
+      rgba(255,255,255,.01)
+    );
+}
+
+.rv-persona-card {
+  --persona-color:#b58a52;
+
+  display:flex;
+  align-items:center;
+  gap:13px;
+  min-width:0;
+  padding:9px 12px;
+  border-radius:16px;
+
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--persona-color) 12%, #1a1117 88%),
+      rgba(13,13,17,.86)
+    );
+
+  border:1px solid
+    color-mix(in srgb, var(--persona-color) 30%, transparent);
+
+  box-shadow:
+    inset 0 1px 0 rgba(255,240,205,.025),
+    0 7px 20px rgba(0,0,0,.15);
+}
+
+.rv-persona-card-right {
+  justify-content:flex-end;
+  text-align:right;
+}
+
+.rv-persona-avatar {
+  width:62px;
+  height:62px;
+  flex:0 0 62px;
+  object-fit:cover;
+  border-radius:50%;
+
+  border:3px solid var(--persona-color);
+
+  box-shadow:
+    0 0 0 2px rgba(221,178,100,.15),
+    0 0 18px
+      color-mix(in srgb, var(--persona-color) 34%, transparent),
+    inset 0 1px 0 rgba(255,255,255,.10);
+
+  background:#111217;
+}
+
+.rv-persona-card-text {
+  min-width:0;
+}
+
+.rv-persona-slot {
+  color:#a89577;
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  margin-bottom:3px;
+}
+
+.rv-persona-name {
+  font-size:18px;
+  line-height:1.1;
+  font-weight:850;
+  letter-spacing:.01em;
+  text-shadow:
+    0 0 14px
+    color-mix(in srgb, currentColor 28%, transparent);
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.rv-table-mark {
+  color:#b88a49;
+  opacity:.72;
+  text-align:center;
+  font-size:13px;
+  text-shadow:0 0 12px rgba(202,157,82,.35);
+}
+
+@media (max-width:820px) {
+  .rv-persona-strip {
+    grid-template-columns:1fr;
+  }
+
+  .rv-table-mark {
+    display:none;
+  }
+
+  .rv-persona-card-right {
+    flex-direction:row-reverse;
+    justify-content:flex-start;
+    text-align:left;
+  }
+}
+
+/* RENDEZVOUS_SPEAKER_STAGE_V1 */
+
+/* Bubble itself grows naturally with its contents */
+#rv-transcript > .rv-speaker-bubble {
+  width:fit-content !important;
+  min-width:0 !important;
+  max-width:88% !important;
+  height:auto !important;
+  flex:0 0 auto !important;
+  box-sizing:border-box !important;
+  overflow:visible !important;
+}
+
+/* Persona 1 */
+#rv-transcript > .rv-speaker-bubble[data-rv-side="left"] {
+  align-self:flex-start !important;
+  margin-left:0 !important;
+  margin-right:auto !important;
+
+  border-left:
+    4px solid
+    color-mix(in srgb, var(--speaker-color) 82%, #d6a85d 18%)
+    !important;
+
+  border-right:
+    1px solid
+    color-mix(in srgb, var(--speaker-color) 42%, transparent)
+    !important;
+}
+
+/* Persona 2 */
+#rv-transcript > .rv-speaker-bubble[data-rv-side="right"] {
+  align-self:flex-end !important;
+  margin-left:auto !important;
+  margin-right:0 !important;
+
+  border-right:
+    4px solid
+    color-mix(in srgb, var(--speaker-color) 82%, #d6a85d 18%)
+    !important;
+
+  border-left:
+    1px solid
+    color-mix(in srgb, var(--speaker-color) 42%, transparent)
+    !important;
+}
+
+/* Human / anything that is not one of the two selected personas */
+#rv-transcript > .rv-speaker-bubble[data-rv-side="center"] {
+  align-self:center !important;
+  margin-left:auto !important;
+  margin-right:auto !important;
+  max-width:92% !important;
+}
+
+/* The person currently speaking */
+#rv-transcript > .rv-speaker-bubble.rv-speaking-active {
+  position:relative !important;
+  z-index:20 !important;
+
+  outline:
+    2px solid
+    color-mix(in srgb, var(--speaker-color) 75%, #f2d391 25%)
+    !important;
+
+  outline-offset:3px !important;
+
+  box-shadow:
+    0 0 0 1px
+      color-mix(in srgb, var(--speaker-color) 60%, transparent)
+      inset,
+    0 0 18px
+      color-mix(in srgb, var(--speaker-color) 50%, transparent),
+    0 12px 32px rgba(0,0,0,.40)
+    !important;
+
+  filter:brightness(1.14) !important;
+  transform:scale(1.012) !important;
+}
+
+
+/* RENDEZVOUS_STAGE_GROW_FIX_V1
+   Let the outer Transcript panel grow around its contents. */
+.rv-stage-panel {
+  max-height:none !important;
+  height:auto !important;
+  overflow:visible !important;
+}
+
+
+/* RENDEZVOUS_INLINE_BUBBLE_AVATARS_V1 */
+.rv-stage-panel{
+  padding-top:8px !important;
+}
+
+.rv-stage-panel .rv-toolbar{
+  margin-top:0 !important;
+  padding-top:0 !important;
+}
+
+#rv-transcript{
+  padding-top:4px !important;
+}
+
+.rv-turn-row{
+  display:flex;
+  align-items:flex-start;
+  gap:12px;
+  width:100%;
+  margin:10px 0;
+}
+
+.rv-turn-row-left{
+  justify-content:flex-start;
+}
+
+.rv-turn-row-right{
+  justify-content:flex-end;
+}
+
+.rv-turn-row .rv-speaker-bubble{
+  margin:0 !important;
+}
+
+.rv-turn-avatar-wrap{
+  flex:0 0 46px;
+  width:46px;
+  display:flex;
+  align-items:flex-start;
+  justify-content:center;
+  padding-top:8px;
+}
+
+.rv-turn-avatar{
+  width:42px;
+  height:42px;
+  border-radius:999px;
+  object-fit:cover;
+  background:#110d10;
+  border:2px solid rgba(214,171,97,.66);
+  box-shadow:0 4px 14px rgba(0,0,0,.28);
+}
+
+.rv-turn-row-right .rv-turn-avatar-wrap{
+  order:2;
+}
+
+.rv-turn-row-right .rv-speaker-bubble{
+  order:1;
+}
+
+</style>
+
+
+
+
+
+      <div class="rv-shell" style="max-width: 1580px; margin: 0 auto; padding: 24px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;">
+        <div class="rv-hero" style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px;">
           <div>
             <h2 style="margin:0;">🍺 Rendezvous</h2>
             <div style="opacity:.75; margin-top:6px;">A separate stage for two personas to meet, talk, and pause.</div>
@@ -977,8 +2203,8 @@
           <div id="rv-status" style="opacity:.8; font-weight:700;"></div>
         </div>
 
-        <div style="display:grid; grid-template-columns: 290px minmax(0, 1.75fr) 290px; gap:20px; align-items:start;">
-          <section style="border:1px solid #555; border-radius:12px; padding:16px;">
+        <div class="rv-shell-grid" style="display:grid; grid-template-columns: 290px minmax(0, 1.75fr) 290px; gap:20px; align-items:start;">
+          <section class="rv-panel rv-setup-panel" style="border:1px solid #555; border-radius:12px; padding:16px;">
             <h3 style="margin-top:0;">Setup</h3>
 
             <label style="display:block; margin-bottom:12px;">
@@ -1009,8 +2235,8 @@
             <button id="rv-start" style="width:100%; padding:12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Start Rendezvous</button>
           </section>
 
-          <section style="border:1px solid #555; border-radius:12px; padding:16px; min-height:520px; max-height:calc(100vh - 170px); display:flex; flex-direction:column;">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px; flex-wrap:wrap; position:sticky; top:0; z-index:2; background:rgba(24,24,32,.96); padding-bottom:10px;">
+          <section class="rv-panel rv-stage-panel" style="border:1px solid #555; border-radius:12px; padding:16px; min-height:520px; max-height:calc(100vh - 170px); display:flex; flex-direction:column;">
+            <div class="rv-toolbar" style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px; flex-wrap:wrap; position:sticky; top:0; z-index:2; background:rgba(24,24,32,.96); padding-bottom:10px;">
               <h3 style="margin:0;">Transcript</h3>
               <div style="display:flex; gap:8px; flex-wrap:wrap;">
                 <button id="rv-copy" style="padding:9px 12px; border-radius:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Copy Transcript</button>
@@ -1045,6 +2271,27 @@
               </div>
             </div>
 
+
+            <div class="rv-persona-strip">
+              <div class="rv-persona-card" id="rv-persona-card-one">
+                <img id="rv-avatar-one" class="rv-persona-avatar" alt="">
+                <div class="rv-persona-card-text">
+                  <div class="rv-persona-slot">Persona 1</div>
+                  <div id="rv-persona-name-one" class="rv-persona-name">—</div>
+                </div>
+              </div>
+
+              <div class="rv-table-mark">◆</div>
+
+              <div class="rv-persona-card rv-persona-card-right" id="rv-persona-card-two">
+                <div class="rv-persona-card-text">
+                  <div class="rv-persona-slot">Persona 2</div>
+                  <div id="rv-persona-name-two" class="rv-persona-name">—</div>
+                </div>
+                <img id="rv-avatar-two" class="rv-persona-avatar" alt="">
+              </div>
+            </div>
+
             <div id="rv-transcript" style="
               overflow:auto;
               flex:1;
@@ -1058,7 +2305,7 @@
             "></div>
           </section>
 
-          <section style="border:1px solid #555; border-radius:12px; padding:16px;">
+          <section class="rv-panel rv-control-panel" style="border:1px solid #555; border-radius:12px; padding:16px;">
             <h3 style="margin-top:0;">Controls</h3>
 
             <button id="rv-continue" style="width:100%; padding:12px; border-radius:10px; margin-bottom:10px; cursor:pointer; border:1px solid #7c3aed; background:rgba(76, 29, 149, .18); color:#e9d5ff; font-weight:700;">Continue</button>
@@ -1111,6 +2358,61 @@
 
     const p1 = root.querySelector("#rv-persona-1");
     const p2 = root.querySelector("#rv-persona-2");
+
+    function updatePersonaStage() {
+      const slots = [
+        {
+          select: p1,
+          card: root.querySelector("#rv-persona-card-one"),
+          avatar: root.querySelector("#rv-avatar-one"),
+          name: root.querySelector("#rv-persona-name-one")
+        },
+        {
+          select: p2,
+          card: root.querySelector("#rv-persona-card-two"),
+          avatar: root.querySelector("#rv-avatar-two"),
+          name: root.querySelector("#rv-persona-name-two")
+        }
+      ];
+
+      for (const slot of slots) {
+        if (!slot.select || !slot.card || !slot.avatar || !slot.name) continue;
+
+        const token = slot.select.value || "";
+        const persona = rvPersonaRecord(token);
+
+        const displayName =
+          String((persona && persona.name) || token || "Persona").trim();
+
+        const trim =
+          String((persona && persona.trim_color) || speakerColor(displayName) || "#b58a52");
+
+        slot.name.textContent = displayName;
+        slot.name.style.color = trim;
+        slot.card.style.setProperty("--persona-color", trim);
+
+        const fallback = rvAvatarFallback(displayName, trim);
+
+        slot.avatar.onerror = () => {
+          slot.avatar.onerror = null;
+          slot.avatar.src = fallback;
+        };
+
+        if (persona && persona.avatar) {
+          slot.avatar.src = rvAvatarUrl(displayName);
+        } else {
+          slot.avatar.src = fallback;
+        }
+
+        slot.avatar.alt = `${displayName} avatar`;
+      }
+    }
+
+    if (p1) p1.addEventListener("change", updatePersonaStage);
+    if (p2) p2.addEventListener("change", updatePersonaStage);
+
+    setTimeout(updatePersonaStage, 0);
+    setTimeout(() => rvTightenRendezvousChrome(root), 0);
     const userBox = root.querySelector("#rv-user-message");
     const historyList = root.querySelector("#rv-history-list");
 
@@ -1214,14 +2516,20 @@
 
       transcript.innerHTML = renderTranscriptHtml(text || "");
       polishTranscriptDom();
+      rvInlineAvatarsBesideBubbles(root, transcript);
 
       requestAnimationFrame(() => {
-        if (wasNearBottom) {
+        if (rvAutoVoiceEnabled()) {
+          transcript.scrollTop = previousScrollTop;
+        } else if (wasNearBottom) {
           transcript.scrollTop = transcript.scrollHeight;
         } else {
           const newScrollHeight = transcript.scrollHeight || 0;
           const heightDelta = newScrollHeight - previousScrollHeight;
-          transcript.scrollTop = Math.max(0, previousScrollTop + Math.max(0, heightDelta));
+          transcript.scrollTop = Math.max(
+            0,
+            previousScrollTop + Math.max(0, heightDelta)
+          );
         }
       });
 
@@ -1291,6 +2599,9 @@
       const data = await api("personas");
       state.personas = data.personas || [];
       fillPersonas(state.personas);
+      setTimeout(() => {
+        if (typeof updatePersonaStage === "function") updatePersonaStage();
+      }, 0);
     }
 
 
@@ -1736,6 +3047,7 @@
       localStorage.setItem("rvShowInnerThoughts", String(state.showInnerThoughts));
       transcript.innerHTML = renderTranscriptHtml(state.lastTranscript || "");
       polishTranscriptDom();
+      rvInlineAvatarsBesideBubbles(root, transcript);
       updateInnerThoughtsToggle();
       transcript.scrollTop = transcript.scrollHeight;
     });

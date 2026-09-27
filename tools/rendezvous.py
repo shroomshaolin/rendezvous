@@ -598,43 +598,58 @@ def _delete_chat(name):
 
 def _chat_once(prompt, chat_name=None):
     """
-    Run plugin-private LLM work through Sapphire's internal isolated chat path.
+    Run plugin-private LLM work through Sapphire's current ExecutionContext path.
 
-    Do not call /api/chat here. That route writes to the active visible chat.
-    Do not create or pass chat_name here. The plugin carries its own transcript state.
+    The turn is ephemeral: it does not write to the operator's visible chat,
+    does not inherit personal scopes, and uses no tools.
     """
     try:
         from core.api_fastapi import get_system
+        from core.continuity.execution_context import ExecutionContext
+        from core.chat import stream_brain
 
         system = get_system()
         if not system or not getattr(system, "llm_chat", None):
             raise RuntimeError("Sapphire system object is not available")
 
-        response = system.llm_chat.isolated_chat(
-            prompt,
-            task_settings={
-                "prompt": "sapphire",
-                "toolset": "none",
-                "provider": "auto",
-                "model": "",
-                "memory_scope": "none",
-                "knowledge_scope": "none",
-                "people_scope": "none",
-                "goal_scope": "none",
-                "context_limit": 0,
-                "max_tool_rounds": 1,
-                "max_parallel_tools": 1,
-            },
+        llm_chat = system.llm_chat
+
+        task_settings = {
+            "prompt": "sapphire",
+            "toolset": "none",
+            "provider": "auto",
+            "model": "",
+            "memory_scope": "none",
+            "knowledge_scope": "none",
+            "people_scope": "none",
+            "goal_scope": "none",
+            "context_limit": 0,
+            "max_tool_rounds": 1,
+            "max_parallel_tools": 1,
+        }
+
+        ctx = ExecutionContext(
+            llm_chat.function_manager,
+            llm_chat.tool_engine,
+            task_settings,
+            session_manager=llm_chat.session_manager,
         )
+
+        brain_token = stream_brain.set_override(
+            llm_chat.session_manager.make_ephemeral_override(task_settings)
+        )
+        try:
+            response = ctx.run(prompt)
+        finally:
+            stream_brain.reset_override(brain_token)
 
         text = _clean_text(response)
         if text:
             return text
 
-        raise RuntimeError("isolated_chat returned no usable text")
+        raise RuntimeError("ExecutionContext returned no usable text")
     except Exception as e:
         raise RuntimeError(f"internal isolated chat failed: {e}")
-
 
 
 def _expanded_transcript_entries(msg):

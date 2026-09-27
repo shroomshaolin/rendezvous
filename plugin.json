@@ -1,13 +1,12 @@
 {
   "name": "rendezvous",
   "display_name": "Rendezvous",
-  "version": "1.1.4",
+  "version": "1.2.0",
   "description": "Two-person persona rendezvous app",
   "author": "Donna",
   "capabilities": {
     "tools": [
-      "tools/rendezvous.py",
-      "tools/archive_reader.py"
+      "tools/rendezvous.py"
     ],
     "routes": [
       {
@@ -63,12 +62,12 @@
       {
         "method": "POST",
         "path": "transcript/delete",
-        "handler": "routes/app_api.py:delete_transcript"
+        "handler": "routes/app_api.py:delete_history"
       },
       {
         "method": "POST",
         "path": "transcripts/delete",
-        "handler": "routes/app_api.py:delete_transcript"
+        "handler": "routes/app_api.py:delete_history"
       },
       {
         "method": "GET",
